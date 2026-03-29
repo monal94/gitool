@@ -1,5 +1,5 @@
-use crate::types::{BranchEntry, RepoStatus};
-use git2::{BranchType, Repository, StatusOptions};
+use crate::types::{BranchEntry, FileEntry, FileStatus, RepoStatus};
+use git2::{BranchType, Repository, StatusOptions, Status};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -247,6 +247,81 @@ fn drift(
         (Some(_), Some(_)) => (Some(0), Some(0)),
         _ => (None, None),
     }
+}
+
+/// Get individual file statuses for a repo (staged and unstaged).
+pub fn get_file_statuses(path: &Path) -> Vec<FileEntry> {
+    let Ok(repo) = Repository::open(path) else {
+        return Vec::new();
+    };
+    let mut opts = StatusOptions::new();
+    opts.include_untracked(true)
+        .recurse_untracked_dirs(true);
+    let Ok(statuses) = repo.statuses(Some(&mut opts)) else {
+        return Vec::new();
+    };
+
+    let mut files = Vec::new();
+    for entry in statuses.iter() {
+        let path_str = entry.path().unwrap_or("").to_string();
+        let s = entry.status();
+
+        // Index (staged) statuses
+        if s.intersects(Status::INDEX_NEW | Status::INDEX_MODIFIED | Status::INDEX_DELETED | Status::INDEX_RENAMED | Status::INDEX_TYPECHANGE) {
+            let status = if s.contains(Status::INDEX_NEW) {
+                FileStatus::Added
+            } else if s.contains(Status::INDEX_MODIFIED) {
+                FileStatus::Modified
+            } else if s.contains(Status::INDEX_DELETED) {
+                FileStatus::Deleted
+            } else if s.contains(Status::INDEX_RENAMED) {
+                FileStatus::Renamed
+            } else {
+                FileStatus::Typechange
+            };
+            files.push(FileEntry { path: path_str.clone(), status, staged: true });
+        }
+
+        // Worktree (unstaged) statuses
+        if s.intersects(Status::WT_MODIFIED | Status::WT_DELETED | Status::WT_RENAMED | Status::WT_TYPECHANGE) {
+            let status = if s.contains(Status::WT_MODIFIED) {
+                FileStatus::Modified
+            } else if s.contains(Status::WT_DELETED) {
+                FileStatus::Deleted
+            } else if s.contains(Status::WT_RENAMED) {
+                FileStatus::Renamed
+            } else {
+                FileStatus::Typechange
+            };
+            files.push(FileEntry { path: path_str.clone(), status, staged: false });
+        }
+
+        // Untracked
+        if s.contains(Status::WT_NEW) {
+            files.push(FileEntry { path: path_str.clone(), status: FileStatus::Untracked, staged: false });
+        }
+
+        // Conflicted
+        if s.contains(Status::CONFLICTED) {
+            files.push(FileEntry { path: path_str, status: FileStatus::Conflicted, staged: false });
+        }
+    }
+
+    // Sort: staged first, then by path
+    files.sort_by(|a, b| b.staged.cmp(&a.staged).then(a.path.cmp(&b.path)));
+    files
+}
+
+pub fn git_stage(path: &Path, file: &str) -> Result<String, String> {
+    run_git(path, &["add", file])
+}
+
+pub fn git_unstage(path: &Path, file: &str) -> Result<String, String> {
+    run_git(path, &["restore", "--staged", file])
+}
+
+pub fn git_discard(path: &Path, file: &str) -> Result<String, String> {
+    run_git(path, &["checkout", "--", file])
 }
 
 // Git mutation operations — shell out to git CLI

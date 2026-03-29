@@ -4,7 +4,7 @@ mod git;
 mod types;
 mod ui;
 
-use app::{App, Mode};
+use app::{App, Mode, Panel};
 use clap::Parser;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers},
@@ -99,6 +99,9 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             }
         }
         KeyCode::Char('P') => app.push(),
+        KeyCode::Char('a') if app.active_panel == Panel::Files => app.stage_selected_file(),
+        KeyCode::Char('u') if app.active_panel == Panel::Files => app.unstage_selected_file(),
+        KeyCode::Char('x') if app.active_panel == Panel::Files => app.discard_selected_file(),
         KeyCode::Char('f') => app.fetch(),
         KeyCode::Char('s') => app.stash_toggle(),
         KeyCode::Char('d') => app.show_diff(),

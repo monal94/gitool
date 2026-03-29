@@ -3,6 +3,7 @@ mod command_log;
 mod confirm;
 mod detail;
 mod diff;
+mod files;
 mod modal;
 
 use crate::app::{App, Mode};
@@ -52,13 +53,20 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_main(f: &mut Frame, app: &App, area: Rect) {
-    let chunks = Layout::default()
+    let cols = Layout::default()
         .direction(Direction::Horizontal)
         .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
         .split(area);
 
-    repo_list::render(f, app, chunks[0]);
-    detail::render(f, app, chunks[1]);
+    repo_list::render(f, app, cols[0]);
+
+    let right = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+        .split(cols[1]);
+
+    detail::render(f, app, right[0]);
+    files::render(f, app, right[1]);
 }
 
 fn render_footer(f: &mut Frame, _app: &App, area: Rect) {

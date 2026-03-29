@@ -1,6 +1,6 @@
 use crate::config::Config;
 use crate::git;
-use crate::types::RepoStatus;
+use crate::types::{FileEntry, RepoStatus};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
@@ -10,6 +10,7 @@ use std::time::Instant;
 pub enum Panel {
     RepoList,
     Branches,
+    Files,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -29,6 +30,7 @@ pub enum Mode {
 pub enum ConfirmAction {
     Push(PathBuf),
     StashPop(PathBuf),
+    DiscardFile(PathBuf, String),
 }
 
 #[derive(Debug)]
@@ -81,6 +83,8 @@ pub struct App {
     pub pending_ops: HashSet<PathBuf>,
     pub filter_text: String,
     pub filter_active: bool,
+    pub files: Vec<FileEntry>,
+    pub selected_file: usize,
     pub command_log: Vec<CommandLogEntry>,
     pub command_log_scroll: u16,
     pub dirty: bool,
@@ -123,6 +127,8 @@ impl App {
             pending_ops: HashSet::new(),
             filter_text: String::new(),
             filter_active: false,
+            files: Vec::new(),
+            selected_file: 0,
             command_log: Vec::new(),
             command_log_scroll: 0,
             dirty: true,
@@ -290,19 +296,32 @@ impl App {
     /// Load branches for the currently selected repo if not already loaded.
     pub fn ensure_branches_loaded(&mut self) {
         if let Some(repo) = self.repos.get(self.selected_repo) {
+            let path = repo.path.clone();
             if !repo.branches_loaded {
-                let path = repo.path.clone();
                 let branches = git::load_branches(&path);
                 if let Some(repo) = self.repos.get_mut(self.selected_repo) {
                     repo.branches = branches.clone();
                     repo.branches_loaded = true;
                 }
-                // Also update all_repos
                 if let Some(pos) = self.all_repos.iter().position(|r| r.path == path) {
                     self.all_repos[pos].branches = branches;
                     self.all_repos[pos].branches_loaded = true;
                 }
             }
+            self.reload_files();
+        }
+    }
+
+    /// Reload file statuses for the currently selected repo.
+    fn reload_files(&mut self) {
+        if let Some(repo) = self.repos.get(self.selected_repo) {
+            self.files = git::get_file_statuses(&repo.path);
+            if self.selected_file >= self.files.len() {
+                self.selected_file = self.files.len().saturating_sub(1);
+            }
+        } else {
+            self.files.clear();
+            self.selected_file = 0;
         }
     }
 
@@ -320,6 +339,11 @@ impl App {
             Panel::Branches => {
                 if self.selected_branch > 0 {
                     self.selected_branch -= 1;
+                }
+            }
+            Panel::Files => {
+                if self.selected_file > 0 {
+                    self.selected_file -= 1;
                 }
             }
         }
@@ -341,15 +365,20 @@ impl App {
                     }
                 }
             }
+            Panel::Files => {
+                if self.selected_file + 1 < self.files.len() {
+                    self.selected_file += 1;
+                }
+            }
         }
     }
 
     pub fn next_panel(&mut self) {
         self.active_panel = match self.active_panel {
             Panel::RepoList => Panel::Branches,
-            Panel::Branches => Panel::RepoList,
+            Panel::Branches => Panel::Files,
+            Panel::Files => Panel::RepoList,
         };
-        self.selected_branch = 0;
     }
 
     // Git actions — all non-blocking via dispatch
@@ -397,7 +426,7 @@ impl App {
             Panel::Branches => {
                 repo.branches.get(self.selected_branch).map(|b| b.name.clone())
             }
-            Panel::RepoList => None,
+            Panel::RepoList | Panel::Files => None,
         };
 
         let Some(branch) = branch_name else {
@@ -420,6 +449,67 @@ impl App {
                 Err(e) => { let _ = tx.send(GitResult::DiffError { message: e }); }
             }
         });
+    }
+
+    pub fn stage_selected_file(&mut self) {
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        let Some(file) = self.files.get(self.selected_file) else { return };
+        if file.staged {
+            self.notify("Already staged".to_string(), false);
+            return;
+        }
+        let path = repo.path.clone();
+        let file_path = file.path.clone();
+        match git::git_stage(&path, &file_path) {
+            Ok(_) => self.notify(format!("Staged: {}", file_path), false),
+            Err(e) => self.notify(format!("Stage failed: {}", e), true),
+        }
+        self.reload_files();
+        self.rescan_selected_repo();
+    }
+
+    pub fn unstage_selected_file(&mut self) {
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        let Some(file) = self.files.get(self.selected_file) else { return };
+        if !file.staged {
+            self.notify("Not staged".to_string(), false);
+            return;
+        }
+        let path = repo.path.clone();
+        let file_path = file.path.clone();
+        match git::git_unstage(&path, &file_path) {
+            Ok(_) => self.notify(format!("Unstaged: {}", file_path), false),
+            Err(e) => self.notify(format!("Unstage failed: {}", e), true),
+        }
+        self.reload_files();
+        self.rescan_selected_repo();
+    }
+
+    pub fn discard_selected_file(&mut self) {
+        let Some(file) = self.files.get(self.selected_file) else { return };
+        if file.staged {
+            self.notify("Unstage first before discarding".to_string(), false);
+            return;
+        }
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        self.mode = Mode::Confirm {
+            message: format!("Discard changes to {}? [y/n]", file.path),
+            action: ConfirmAction::DiscardFile(repo.path.clone(), file.path.clone()),
+        };
+    }
+
+    fn rescan_selected_repo(&mut self) {
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        let path = repo.path.clone();
+        if let Some(new_status) = git::scan_repo(&path) {
+            if let Some(pos) = self.repos.iter().position(|r| r.path == path) {
+                self.repos[pos] = new_status.clone();
+            }
+            if let Some(pos) = self.all_repos.iter().position(|r| r.path == path) {
+                self.all_repos[pos] = new_status;
+            }
+            self.ensure_branches_loaded();
+        }
     }
 
     pub fn toggle_hide(&mut self) {
@@ -460,6 +550,14 @@ impl App {
                 }
                 ConfirmAction::StashPop(path) => {
                     self.dispatch(path, "Stash pop", |p| git::git_stash_pop(p));
+                }
+                ConfirmAction::DiscardFile(repo_path, file_path) => {
+                    match git::git_discard(&repo_path, &file_path) {
+                        Ok(_) => self.notify(format!("Discarded: {}", file_path), false),
+                        Err(e) => self.notify(format!("Discard failed: {}", e), true),
+                    }
+                    self.reload_files();
+                    self.rescan_selected_repo();
                 }
             }
         }

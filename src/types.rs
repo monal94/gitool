@@ -1,5 +1,23 @@
 use std::path::PathBuf;
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum FileStatus {
+    Modified,
+    Added,
+    Deleted,
+    Renamed,
+    Untracked,
+    Typechange,
+    Conflicted,
+}
+
+#[derive(Debug, Clone)]
+pub struct FileEntry {
+    pub path: String,
+    pub status: FileStatus,
+    pub staged: bool,
+}
+
 #[derive(Debug, Clone)]
 pub struct BranchEntry {
     pub name: String,
