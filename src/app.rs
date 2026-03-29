@@ -83,6 +83,7 @@ pub struct App {
     pub filter_active: bool,
     pub command_log: Vec<CommandLogEntry>,
     pub command_log_scroll: u16,
+    pub dirty: bool,
     result_rx: Receiver<GitResult>,
     task_tx: Sender<GitResult>,
 }
@@ -124,6 +125,7 @@ impl App {
             filter_active: false,
             command_log: Vec::new(),
             command_log_scroll: 0,
+            dirty: true,
             result_rx,
             task_tx,
         };
@@ -269,14 +271,20 @@ impl App {
             is_error,
             created: Instant::now(),
         });
+        self.dirty = true;
     }
 
     pub fn clear_stale_notification(&mut self) {
         if let Some(ref n) = self.notification {
             if n.created.elapsed().as_secs() >= 3 {
                 self.notification = None;
+                self.dirty = true;
             }
         }
+    }
+
+    pub fn mark_dirty(&mut self) {
+        self.dirty = true;
     }
 
     /// Load branches for the currently selected repo if not already loaded.

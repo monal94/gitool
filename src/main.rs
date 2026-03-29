@@ -58,7 +58,11 @@ fn run_app(
     loop {
         app.clear_stale_notification();
         app.poll_results();
-        terminal.draw(|f| ui::render(f, app))?;
+
+        if app.dirty {
+            terminal.draw(|f| ui::render(f, app))?;
+            app.dirty = false;
+        }
 
         if event::poll(Duration::from_millis(100))? {
             if let Event::Key(key) = event::read()? {
@@ -70,6 +74,7 @@ fn run_app(
                     Mode::Confirm { .. } => handle_confirm_mode(app, key.code),
                     Mode::Filter => handle_filter_mode(app, key.code),
                 }
+                app.mark_dirty();
             }
         }
 
