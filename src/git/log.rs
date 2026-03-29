@@ -77,37 +77,37 @@ pub fn git_show_files(path: &Path, hash: &str) -> Result<Vec<crate::app::CommitF
     Ok(files)
 }
 
-/// Run `git blame --line-porcelain` and parse the output into `BlameLine` entries.
+/// Get blame information for a file using git2 (no subprocess).
 pub fn git_blame(path: &Path, file: &str) -> Result<Vec<crate::app::BlameLine>, String> {
-    let output = std::process::Command::new("git")
-        .args(["blame", "--line-porcelain", file])
-        .current_dir(path)
-        .output()
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let blame = repo.blame_file(std::path::Path::new(file), None)
         .map_err(|e| e.to_string())?;
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
-    }
+
+    // Read the file content to get line text
+    let file_path = path.join(file);
+    let content = std::fs::read_to_string(&file_path)
+        .map_err(|e| e.to_string())?;
+    let file_lines: Vec<&str> = content.lines().collect();
+
     let mut lines = Vec::new();
-    let mut current_hash = String::new();
-    let mut current_author = String::new();
-    let mut current_line_no = 0usize;
-    for raw_line in String::from_utf8_lossy(&output.stdout).lines() {
-        if raw_line.starts_with('\t') {
+    for hunk in blame.iter() {
+        let hash = format!("{:.7}", hunk.final_commit_id());
+        let author = hunk.final_signature().name().unwrap_or("").to_string();
+        let start = hunk.final_start_line();
+        let hunk_lines = hunk.lines_in_hunk();
+
+        for offset in 0..hunk_lines {
+            let line_no = start + offset;
+            let content = file_lines
+                .get(line_no.saturating_sub(1))
+                .unwrap_or(&"")
+                .to_string();
             lines.push(crate::app::BlameLine {
-                hash: current_hash[..7.min(current_hash.len())].to_string(),
-                author: current_author.clone(),
-                line_no: current_line_no,
-                content: raw_line[1..].to_string(),
+                hash: hash.clone(),
+                author: author.clone(),
+                line_no,
+                content,
             });
-        } else if let Some(rest) = raw_line.strip_prefix("author ") {
-            current_author = rest.to_string();
-        } else if raw_line.len() >= 40 && raw_line.chars().take(40).all(|c| c.is_ascii_hexdigit()) {
-            // Hash line: "<40-char-hash> <orig_lineno> <final_lineno> [<num_lines>]"
-            let parts: Vec<&str> = raw_line.split_whitespace().collect();
-            current_hash = parts[0].to_string();
-            if parts.len() >= 3 {
-                current_line_no = parts[2].parse().unwrap_or(0);
-            }
         }
     }
     Ok(lines)

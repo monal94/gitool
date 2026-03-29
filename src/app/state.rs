@@ -31,19 +31,23 @@ impl App {
         self.ensure_branches_loaded();
     }
 
-    /// Load the commit log for the currently selected repo (async).
+    /// Load the commit log for the currently selected repo (async, cached by generation).
     pub fn load_log(&mut self) {
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        // Skip if commit log already loaded for this repo generation
+        if repo.generation == self.commit_log_generation && !self.commit_log.is_empty() {
+            return;
+        }
         let path = repo.path.clone();
+        let current_gen = repo.generation;
         let tx = self.task_tx.clone();
-        // Reset state immediately for responsive UI
         self.commit_log.clear();
         self.commit_log_selected = 0;
         self.commit_files.clear();
         self.commit_files_selected = 0;
         self.preview_content.clear();
         self.preview_scroll = 0;
-        // Load in background
+        self.commit_log_generation = current_gen;
         rayon::spawn(move || {
             let commits = git::git_log(&path, 200);
             let _ = tx.send(GitResult::LogReady { commits });

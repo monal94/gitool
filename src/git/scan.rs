@@ -164,16 +164,6 @@ fn stash_count(repo: &Repository) -> usize {
 
 /// Collect a unified branch list merging local and remote refs by name.
 fn collect_branches(repo: &Repository, current: &str, default_branch: &str) -> Vec<BranchEntry> {
-    let main_oid = repo
-        .find_branch(default_branch, BranchType::Local)
-        .ok()
-        .and_then(|b| b.get().target());
-
-    let origin_main_oid = repo
-        .find_branch(&format!("origin/{}", default_branch), BranchType::Remote)
-        .ok()
-        .and_then(|b| b.get().target());
-
     let head_ref = repo
         .find_reference("refs/remotes/origin/HEAD")
         .ok()
@@ -190,18 +180,10 @@ fn collect_branches(repo: &Repository, current: &str, default_branch: &str) -> V
             let Some(name) = b.name().ok().flatten().map(String::from) else {
                 continue;
             };
-            let oid = b.get().target();
-
-            let (ahead_main, behind_main) = drift(repo, oid, main_oid);
-
             let remote_name = format!("origin/{}", name);
-            let remote_oid = repo
+            let has_remote = repo
                 .find_branch(&remote_name, BranchType::Remote)
-                .ok()
-                .and_then(|b| b.get().target());
-            let has_remote = remote_oid.is_some();
-
-            let (ahead_remote, behind_remote) = drift(repo, oid, remote_oid);
+                .is_ok();
 
             map.insert(name.clone(), BranchEntry {
                 name: name.clone(),
@@ -209,10 +191,10 @@ fn collect_branches(repo: &Repository, current: &str, default_branch: &str) -> V
                 is_head_ref: head_ref.as_deref() == Some(&name),
                 has_local: true,
                 has_remote,
-                ahead_main,
-                behind_main,
-                ahead_remote,
-                behind_remote,
+                ahead_main: None,
+                behind_main: None,
+                ahead_remote: None,
+                behind_remote: None,
             });
         }
     }
@@ -241,17 +223,14 @@ fn collect_branches(repo: &Repository, current: &str, default_branch: &str) -> V
                 continue;
             }
 
-            let oid = b.get().target();
-            let (ahead_main, behind_main) = drift(repo, oid, origin_main_oid);
-
             map.insert(name.clone(), BranchEntry {
                 name: name.clone(),
                 is_current: false,
                 is_head_ref: head_ref.as_deref() == Some(&name),
                 has_local: false,
                 has_remote: true,
-                ahead_main,
-                behind_main,
+                ahead_main: None,
+                behind_main: None,
                 ahead_remote: None,
                 behind_remote: None,
             });

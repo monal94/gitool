@@ -74,15 +74,21 @@ impl App {
         self.load_preview();
     }
 
-    /// Load preview content for the right panel based on the active side panel and selection.
+    /// Request a preview load (debounced — actual dispatch happens in poll_results after 80ms).
     pub fn load_preview(&mut self) {
+        self.preview_pending = true;
+        self.preview_requested_at = std::time::Instant::now();
+    }
+
+    /// Actually dispatch the preview load (called from poll_results after debounce).
+    pub fn dispatch_preview(&mut self) {
         match self.active_side {
             SidePanel::Repos => {
-                // Preview shows repo info — rendered directly from repo data, no async needed
+                // Rendered directly from repo data, no async needed
                 self.preview_content.clear();
+                self.dirty = true;
             }
             SidePanel::Files => {
-                // Load diff for selected file
                 let Some(repo) = self.repos.get(self.selected_repo) else { return };
                 let Some(file) = self.files.get(self.selected_file) else {
                     self.preview_content.clear();
@@ -99,7 +105,6 @@ impl App {
                 });
             }
             SidePanel::Branches => {
-                // Load recent commits for selected branch — use commit log
                 let Some(repo) = self.repos.get(self.selected_repo) else { return };
                 let path = repo.path.clone();
                 let tx = self.task_tx.clone();
@@ -109,16 +114,14 @@ impl App {
                 });
             }
             SidePanel::Commits => {
-                // Commit detail loaded by load_commit_detail (already wired in log_move_up/down)
+                // Already handled by load_commit_detail in log_move_up/down
             }
             SidePanel::Stash => {
-                // Load stash diff for selected entry
                 let Some(repo) = self.repos.get(self.selected_repo) else { return };
                 let stash_idx = self.selected_stash;
                 let path = repo.path.clone();
                 let tx = self.task_tx.clone();
                 rayon::spawn(move || {
-                    // git stash show -p stash@{N}
                     let content = std::process::Command::new("git")
                         .args(["stash", "show", "-p", &format!("stash@{{{}}}", stash_idx)])
                         .current_dir(&path)

@@ -213,6 +213,9 @@ pub struct App {
     // Preview (right panel)
     pub preview_content: String,
     pub preview_scroll: usize,
+    pub preview_pending: bool,
+    pub preview_requested_at: Instant,
+    pub commit_log_generation: u64,
     // Diff overlay
     pub diff_content: String,
     pub diff_scroll: u16,
@@ -282,6 +285,9 @@ impl App {
             should_quit: false,
             preview_content: String::new(),
             preview_scroll: 0,
+            preview_pending: false,
+            preview_requested_at: Instant::now(),
+            commit_log_generation: 0,
             diff_content: String::new(),
             diff_scroll: 0,
             blame_content: Vec::new(),
@@ -504,6 +510,12 @@ impl App {
                     self.dirty = true;
                 }
             }
+        }
+
+        // Debounced preview: dispatch after user stops navigating (80ms)
+        if self.preview_pending && self.preview_requested_at.elapsed() >= Duration::from_millis(80) {
+            self.preview_pending = false;
+            self.dispatch_preview();
         }
     }
 }

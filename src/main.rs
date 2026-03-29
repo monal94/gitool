@@ -66,7 +66,7 @@ fn run_app(
             app.dirty = false;
         }
 
-        if event::poll(Duration::from_millis(100))? {
+        if event::poll(Duration::from_millis(50))? {
             match event::read()? {
                 Event::Key(key) => {
                     match &app.mode {
