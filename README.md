@@ -17,8 +17,8 @@ Built with Rust, [ratatui](https://github.com/ratatui/ratatui), and [libgit2](ht
 │    platform    ●    │                                              │
 │                     │                                              │
 ├─────────────────────┴──────────────────────────────────────────────┤
-│ j/k:nav  Enter:checkout  p:pull  P:push  f:fetch  s:stash  d:diff │
-│ /:filter  w:workspace  h:hide  H:show hidden  r:refresh  q:quit   │
+│ j/k:nav  Tab:panel  Enter:checkout  p:pull  P:push  f:fetch       │
+│ s:stash  d:diff  l:log  c:commit  z:zoom  `:cmdlog  q:quit        │
 └────────────────────────────────────────────────────────────────────┘
 ```
 
@@ -156,25 +156,30 @@ defaults:
 
 ```
 src/
-├── main.rs          # Entry point, event loop, key handlers
-├── app.rs           # App state, navigation, async git dispatch
-├── git.rs           # Git operations (libgit2 + git CLI)
-├── config.rs        # YAML config load/save
-├── types.rs         # Data models (RepoStatus, BranchEntry)
+├── main.rs            # Entry point, event loop, key/mouse handlers
+├── app.rs             # App state, navigation, async git dispatch, undo stack
+├── git.rs             # Git operations (libgit2 + git CLI)
+├── config.rs          # YAML config load/save
+├── types.rs           # Data models (RepoStatus, BranchEntry, FileEntry)
 └── ui/
-    ├── mod.rs       # Layout: header + panels + footer
-    ├── repo_list.rs # Left panel: repo list with status glyphs
-    ├── detail.rs    # Right panel: branch list with drift
-    ├── diff.rs      # Diff overlay with syntax highlighting
-    ├── modal.rs     # Workspace switcher modal
-    └── confirm.rs   # Confirmation dialog
+    ├── mod.rs         # Layout: header + panels + footer + zoom
+    ├── repo_list.rs   # Left panel: repo list with status glyphs + bulk marks
+    ├── detail.rs      # Right panel: branch list with drift
+    ├── files.rs       # Files panel: stage/unstage/discard
+    ├── diff.rs        # Diff overlay with syntax highlighting
+    ├── commit_log.rs  # Commit history overlay
+    ├── command_log.rs # Command log overlay
+    ├── modal.rs       # Workspace switcher modal
+    └── confirm.rs     # Confirmation dialog
 ```
 
-**Git operations** use `libgit2` (via the `git2` crate) for read operations (scanning, branch enumeration, status) and shell out to `git` CLI for mutations (pull, push, fetch, checkout, stash) since `git2` doesn't handle remote auth well.
+**Git operations** use `libgit2` (via the `git2` crate) for read operations (scanning, branch enumeration, file status) and shell out to `git` CLI for mutations (pull, push, fetch, checkout, stash, stage, commit) since `git2` doesn't handle remote auth well.
 
 **Non-blocking I/O**: All git mutations are dispatched to background threads via `std::sync::mpsc` channels. The event loop polls for results each tick, keeping the UI responsive.
 
-**Parallel scanning**: Repos are scanned concurrently using `std::thread::scope` on startup.
+**Parallel scanning**: Repos are scanned concurrently using `std::thread::scope` on startup. Branch drift is computed lazily (on-demand for the selected repo only).
+
+**File watching**: Uses the `notify` crate with debouncing to detect external changes to `.git` directories and auto-refresh.
 
 ## Roadmap
 
@@ -210,10 +215,11 @@ src/
 
 | Component | Technology |
 |-----------|-----------|
-| Language | Rust 1.63+ |
+| Language | Rust 2024 edition |
 | TUI framework | [ratatui](https://github.com/ratatui/ratatui) |
 | Terminal backend | [crossterm](https://github.com/crossterm-rs/crossterm) |
 | Git library | [git2](https://github.com/rust-lang/git2-rs) (libgit2 bindings) |
+| File watching | [notify](https://github.com/notify-rs/notify) |
 | Config | [serde_yaml](https://github.com/dtolnay/serde-yaml) |
 | CLI | [clap](https://github.com/clap-rs/clap) |
 
