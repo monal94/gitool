@@ -112,7 +112,9 @@ pub enum GitResult {
     DiffError {
         message: String,
     },
-    FileChanged,
+    FileChanged {
+        repo_path: Option<PathBuf>,
+    },
     LogReady {
         commits: Vec<CommitEntry>,
     },
@@ -325,8 +327,30 @@ impl App {
                 GitResult::DiffError { message } => {
                     self.notify(format!("Diff failed: {}", message), true);
                 }
-                GitResult::FileChanged => {
-                    self.refresh();
+                GitResult::FileChanged { repo_path } => {
+                    if let Some(repo_path) = repo_path {
+                        // Selective refresh: only rescan the changed repo
+                        let is_selected = self.repos.get(self.selected_repo)
+                            .is_some_and(|r| r.path == repo_path);
+                        let new_status = if is_selected {
+                            git::scan_repo_full(&repo_path)
+                        } else {
+                            git::scan_repo(&repo_path)
+                        };
+                        if let Some(new_status) = new_status {
+                            if let Some(pos) = self.repos.iter().position(|r| r.path == repo_path) {
+                                self.repos[pos] = new_status.clone();
+                            }
+                            if let Some(pos) = self.all_repos.iter().position(|r| r.path == repo_path) {
+                                self.all_repos[pos] = new_status;
+                            }
+                            if is_selected {
+                                self.reload_files();
+                            }
+                        }
+                    } else {
+                        self.refresh();
+                    }
                     self.dirty = true;
                 }
                 GitResult::LogReady { commits } => {
@@ -592,18 +616,28 @@ impl App {
 
     fn start_watcher(&mut self) {
         let tx = self.task_tx.clone();
+        let repo_paths: Vec<PathBuf> = self.all_repos.iter().map(|r| r.path.clone()).collect();
         let debouncer = new_debouncer(
             Duration::from_millis(500),
             move |res: Result<Vec<notify_debouncer_mini::DebouncedEvent>, _>| {
-                if let Ok(events) = res
-                    && events.iter().any(|e| matches!(e.kind, DebouncedEventKind::Any)) {
-                        let _ = tx.send(GitResult::FileChanged);
+                if let Ok(events) = res {
+                    // Find which repo the event belongs to
+                    let repo_path = events.iter()
+                        .filter(|e| matches!(e.kind, DebouncedEventKind::Any))
+                        .find_map(|e| {
+                            let event_path = e.path.to_string_lossy();
+                            repo_paths.iter().find(|rp| {
+                                event_path.starts_with(&rp.to_string_lossy().as_ref())
+                            }).cloned()
+                        });
+                    if repo_path.is_some() || events.iter().any(|e| matches!(e.kind, DebouncedEventKind::Any)) {
+                        let _ = tx.send(GitResult::FileChanged { repo_path });
                     }
+                }
             },
         );
 
         if let Ok(mut debouncer) = debouncer {
-            // Watch only .git directories to avoid excessive FS events
             for repo in &self.all_repos {
                 let git_dir = repo.path.join(".git");
                 let _ = debouncer.watcher().watch(
