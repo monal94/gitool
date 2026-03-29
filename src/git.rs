@@ -362,6 +362,63 @@ pub fn git_log(path: &Path, limit: usize) -> Vec<crate::app::CommitEntry> {
         .collect()
 }
 
+/// Get files changed in a specific commit.
+pub fn git_show_files(path: &Path, hash: &str) -> Result<Vec<crate::app::CommitFileEntry>, String> {
+    let output = Command::new("git")
+        .args(["diff-tree", "--no-commit-id", "-r", "-M", "--name-status", hash])
+        .current_dir(path)
+        .output()
+        .map_err(|e| e.to_string())?;
+
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+
+    Ok(String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(2, '\t').collect();
+            if parts.len() == 2 {
+                Some(crate::app::CommitFileEntry {
+                    status: parts[0].chars().next().unwrap_or('?'),
+                    path: parts[1].to_string(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect())
+}
+
+/// Get the full diff for a specific commit.
+pub fn git_diff_commit(path: &Path, hash: &str) -> Result<String, String> {
+    // Try diff with parent first; falls back to show for root commits
+    let result = run_git(path, &["diff", &format!("{}~1..{}", hash, hash)]);
+    if result.is_err() {
+        // Root commit — use git show
+        return run_git(path, &["show", "--format=", "--", hash]);
+    }
+    result
+}
+
+/// Get the diff for a specific file in a commit.
+pub fn git_diff_commit_file(path: &Path, hash: &str, file: &str) -> Result<String, String> {
+    let result = run_git(path, &["diff", &format!("{}~1..{}", hash, hash), "--", file]);
+    if result.is_err() {
+        return run_git(path, &["show", "--format=", hash, "--", file]);
+    }
+    result
+}
+
+/// Get the diff for a specific file in the working tree.
+pub fn git_diff_file(path: &Path, file: &str, staged: bool) -> Result<String, String> {
+    if staged {
+        run_git(path, &["diff", "--cached", "--", file])
+    } else {
+        run_git(path, &["diff", "--", file])
+    }
+}
+
 pub fn git_commit(path: &Path, message: &str) -> Result<String, String> {
     run_git(path, &["commit", "-m", message])
 }
@@ -941,6 +998,181 @@ mod tests {
         let repo_path = init_repo_with_commit("stash-count", &tmp);
         let status = scan_repo(&repo_path).unwrap();
         assert_eq!(status.stash, 0);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // git_show_files tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_show_files_returns_added_file() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("show-files", &tmp);
+
+        // Add and commit a file
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("new.txt"), "content").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("new.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add new.txt", &tree, &[&parent]).unwrap();
+
+        // Get the latest commit hash
+        let commits = git_log(&repo_path, 1);
+        assert!(!commits.is_empty());
+        let hash = &commits[0].hash;
+
+        let files = git_show_files(&repo_path, hash).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].path, "new.txt");
+        assert_eq!(files[0].status, 'A');
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn git_show_files_returns_modified_file() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("show-mod", &tmp);
+
+        let repo = Repository::open(&repo_path).unwrap();
+        // Create and commit a file
+        fs::write(repo_path.join("file.txt"), "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add file", &tree, &[&parent]).unwrap();
+
+        // Modify and commit again
+        fs::write(repo_path.join("file.txt"), "modified").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Modify file", &tree, &[&parent]).unwrap();
+
+        let commits = git_log(&repo_path, 1);
+        let files = git_show_files(&repo_path, &commits[0].hash).unwrap();
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0].status, 'M');
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // git_diff_commit / git_diff_commit_file tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_diff_commit_returns_diff_content() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("diff-commit", &tmp);
+
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("code.rs"), "fn main() {}").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("code.rs")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add code", &tree, &[&parent]).unwrap();
+
+        let commits = git_log(&repo_path, 1);
+        let diff = git_diff_commit(&repo_path, &commits[0].hash).unwrap();
+        assert!(diff.contains("code.rs"));
+        assert!(diff.contains("+fn main() {}"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn git_diff_commit_file_returns_file_diff() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("diff-file", &tmp);
+
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("a.txt"), "aaa").unwrap();
+        fs::write(repo_path.join("b.txt"), "bbb").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("a.txt")).unwrap();
+        index.add_path(Path::new("b.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add files", &tree, &[&parent]).unwrap();
+
+        let commits = git_log(&repo_path, 1);
+        let diff = git_diff_commit_file(&repo_path, &commits[0].hash, "a.txt").unwrap();
+        assert!(diff.contains("a.txt"));
+        assert!(diff.contains("+aaa"));
+        // Should NOT contain b.txt
+        assert!(!diff.contains("b.txt"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // git_diff_file tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_diff_file_unstaged() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("diff-wt", &tmp);
+
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("tracked.txt"), "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("tracked.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add tracked", &tree, &[&parent]).unwrap();
+
+        // Modify without staging
+        fs::write(repo_path.join("tracked.txt"), "changed").unwrap();
+
+        let diff = git_diff_file(&repo_path, "tracked.txt", false).unwrap();
+        assert!(diff.contains("-original"));
+        assert!(diff.contains("+changed"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn git_diff_file_staged() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("diff-staged", &tmp);
+
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("tracked.txt"), "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("tracked.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add tracked", &tree, &[&parent]).unwrap();
+
+        // Modify and stage
+        fs::write(repo_path.join("tracked.txt"), "staged content").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("tracked.txt")).unwrap();
+        index.write().unwrap();
+
+        let diff = git_diff_file(&repo_path, "tracked.txt", true).unwrap();
+        assert!(diff.contains("-original"));
+        assert!(diff.contains("+staged content"));
         let _ = fs::remove_dir_all(&tmp);
     }
 }
