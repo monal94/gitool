@@ -161,7 +161,7 @@ fn render_branches(
             // Drift: vs main
             let ahead_m = b.ahead_main.unwrap_or(0);
             let behind_m = b.behind_main.unwrap_or(0);
-            if (ahead_m > 0 || behind_m > 0) && b.name != "main" {
+            if (ahead_m > 0 || behind_m > 0) && b.name != repo.default_branch {
                 let mut parts = Vec::new();
                 if ahead_m > 0 { parts.push(format!("↑{}", ahead_m)); }
                 if behind_m > 0 { parts.push(format!("↓{}", behind_m)); }

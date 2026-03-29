@@ -48,6 +48,7 @@ pub fn scan_repo(path: &Path) -> Option<RepoStatus> {
     let (ahead, behind) = upstream_drift(&repo);
     let dirty = dirty_count(&repo);
     let stash = stash_count(&repo);
+    let default_branch = detect_default_branch(&repo);
 
     Some(RepoStatus {
         name,
@@ -59,6 +60,7 @@ pub fn scan_repo(path: &Path) -> Option<RepoStatus> {
         stash,
         branches: Vec::new(),
         branches_loaded: false,
+        default_branch,
     })
 }
 
@@ -71,7 +73,8 @@ pub fn scan_repo_full(path: &Path) -> Option<RepoStatus> {
     let (ahead, behind) = upstream_drift(&repo);
     let dirty = dirty_count(&repo);
     let stash = stash_count(&repo);
-    let branches = collect_branches(&repo, &branch);
+    let default_branch = detect_default_branch(&repo);
+    let branches = collect_branches(&repo, &branch, &default_branch);
 
     Some(RepoStatus {
         name,
@@ -83,12 +86,13 @@ pub fn scan_repo_full(path: &Path) -> Option<RepoStatus> {
         stash,
         branches,
         branches_loaded: true,
+        default_branch,
     })
 }
 
 /// Load branches and drift for a single repo (called on-demand).
 pub fn load_branches(path: &Path) -> Vec<BranchEntry> {
-    let Some(repo) = Repository::open(path).ok() else {
+    let Ok(repo) = Repository::open(path) else {
         return Vec::new();
     };
     load_branches_with_repo(&repo)
@@ -97,7 +101,8 @@ pub fn load_branches(path: &Path) -> Vec<BranchEntry> {
 /// Load branches using an already-opened Repository handle.
 pub fn load_branches_with_repo(repo: &Repository) -> Vec<BranchEntry> {
     let branch = current_branch(repo);
-    collect_branches(repo, &branch)
+    let default_branch = detect_default_branch(repo);
+    collect_branches(repo, &branch, &default_branch)
 }
 
 fn current_branch(repo: &Repository) -> String {
@@ -132,19 +137,42 @@ fn dirty_count(repo: &Repository) -> usize {
         .unwrap_or(0)
 }
 
+/// Detect the default branch name (main, master, develop, etc.)
+fn detect_default_branch(repo: &Repository) -> String {
+    // 1. Check origin/HEAD symbolic ref
+    if let Ok(reference) = repo.find_reference("refs/remotes/origin/HEAD") {
+        if let Ok(resolved) = reference.resolve() {
+            if let Some(name) = resolved.shorthand() {
+                if let Some(branch) = name.strip_prefix("origin/") {
+                    return branch.to_string();
+                }
+            }
+        }
+    }
+    // 2. Fallback: try common names
+    for name in &["main", "master", "develop"] {
+        if repo.find_branch(name, BranchType::Local).is_ok()
+            || repo.find_branch(&format!("origin/{}", name), BranchType::Remote).is_ok()
+        {
+            return name.to_string();
+        }
+    }
+    "main".to_string()
+}
+
 fn stash_count(repo: &Repository) -> usize {
     repo.reflog("refs/stash").map(|r| r.len()).unwrap_or(0)
 }
 
 /// Collect a unified branch list merging local and remote refs by name.
-fn collect_branches(repo: &Repository, current: &str) -> Vec<BranchEntry> {
+fn collect_branches(repo: &Repository, current: &str, default_branch: &str) -> Vec<BranchEntry> {
     let main_oid = repo
-        .find_branch("main", BranchType::Local)
+        .find_branch(default_branch, BranchType::Local)
         .ok()
         .and_then(|b| b.get().target());
 
     let origin_main_oid = repo
-        .find_branch("origin/main", BranchType::Remote)
+        .find_branch(&format!("origin/{}", default_branch), BranchType::Remote)
         .ok()
         .and_then(|b| b.get().target());
 
@@ -235,8 +263,8 @@ fn collect_branches(repo: &Repository, current: &str) -> Vec<BranchEntry> {
     // Sort: main first, then alphabetical
     let mut branches: Vec<BranchEntry> = map.into_values().collect();
     branches.sort_by(|a, b| {
-        let a_main = if a.name == "main" { 0 } else { 1 };
-        let b_main = if b.name == "main" { 0 } else { 1 };
+        let a_main = if a.name == default_branch { 0 } else { 1 };
+        let b_main = if b.name == default_branch { 0 } else { 1 };
         a_main.cmp(&b_main).then(a.name.cmp(&b.name))
     });
     branches
