@@ -87,6 +87,8 @@ pub enum TextInputAction {
     CreateBranch,
     RenameBranch(String),
     CommitMessage,
+    AmendCommit,
+    StashMessage,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -97,6 +99,7 @@ pub enum ConfirmAction {
     DiscardFile(PathBuf, String, bool), // repo_path, file_path, is_untracked
     DeleteBranch(PathBuf, String),
     MergeBranch(PathBuf, String),
+    StashDrop(PathBuf, usize),
 }
 
 #[derive(Debug)]
@@ -212,6 +215,8 @@ pub struct App {
     pub pending_ops: HashSet<PathBuf>,
     pub marked_repos: HashSet<PathBuf>,
     pub undo_stack: Vec<UndoOp>,
+    // Editor
+    pub editor_command: Option<(String, std::path::PathBuf)>,
     // Internal
     pub highlighter: crate::highlight::Highlighter,
     cached_repo: Option<git2::Repository>,
@@ -272,6 +277,7 @@ impl App {
             pending_ops: HashSet::new(),
             marked_repos: HashSet::new(),
             undo_stack: Vec::new(),
+            editor_command: None,
             highlighter: crate::highlight::Highlighter::new(),
             cached_repo: None,
             cached_repo_path: None,

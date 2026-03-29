@@ -93,6 +93,16 @@ fn run_app(
             }
         }
 
+        if let Some((editor, path)) = app.editor_command.take() {
+            disable_raw_mode()?;
+            execute!(terminal.backend_mut(), DisableMouseCapture, LeaveAlternateScreen)?;
+            let _ = std::process::Command::new(&editor).arg(&path).status();
+            enable_raw_mode()?;
+            execute!(terminal.backend_mut(), EnterAlternateScreen, EnableMouseCapture)?;
+            terminal.clear()?;
+            app.mark_dirty();
+        }
+
         if app.should_quit {
             return Ok(());
         }
@@ -186,7 +196,9 @@ fn handle_files_panel(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) {
         KeyCode::Char('u') => app.unstage_selected_file(),
         KeyCode::Char('x') => app.discard_selected_file(),
         KeyCode::Char('c') => app.create_commit_prompt(),
+        KeyCode::Char('A') => app.amend_commit_prompt(),
         KeyCode::Char('d') | KeyCode::Enter => app.show_file_diff(),
+        KeyCode::Char('e') => app.open_in_editor(),
         _ => {}
     }
 }
@@ -215,6 +227,15 @@ fn handle_commits_panel(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) {
         KeyCode::Char('u') => {
             app.preview_scroll = app.preview_scroll.saturating_sub(20);
         }
+        KeyCode::Char('y') => {
+            if let Some(entry) = app.commit_log.get(app.commit_log_selected) {
+                let hash = entry.hash.clone();
+                match arboard::Clipboard::new().and_then(|mut cb| cb.set_text(&hash)) {
+                    Ok(()) => app.notify(format!("Copied: {}", hash), false),
+                    Err(e) => app.notify(format!("Clipboard error: {}", e), true),
+                }
+            }
+        }
         _ => {}
     }
 }
@@ -224,6 +245,7 @@ fn handle_stash_panel(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) {
         KeyCode::Char('j') | KeyCode::Down => app.side_move_down(),
         KeyCode::Char('k') | KeyCode::Up => app.side_move_up(),
         KeyCode::Char('s') | KeyCode::Enter => app.stash_toggle(),
+        KeyCode::Char('x') => app.stash_drop_selected(),
         _ => {}
     }
 }

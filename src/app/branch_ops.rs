@@ -81,6 +81,19 @@ impl App {
                         git::git_commit(p, &msg)
                     });
                 }
+                TextInputAction::AmendCommit => {
+                    let msg = input;
+                    self.dispatch(path, "Amend", move |p| {
+                        git::git_amend_commit(p, &msg)
+                    });
+                }
+                TextInputAction::StashMessage => {
+                    self.push_undo(UndoOp::Stash { repo_path: path.clone() });
+                    let msg = input;
+                    self.dispatch(path, "Stash", move |p| {
+                        git::git_stash_with_message(p, &msg)
+                    });
+                }
             }
         }
     }

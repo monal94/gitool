@@ -58,6 +58,19 @@ pub fn git_commit(path: &Path, message: &str) -> Result<String, String> {
     Ok(format!("{:.7}", oid))
 }
 
+pub fn git_amend_commit(path: &Path, message: &str) -> Result<String, String> {
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let head = repo.head().map_err(|e| format!("No HEAD: {}", e))?;
+    let head_commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+    let mut index = repo.index().map_err(|e| e.to_string())?;
+    let tree_id = index.write_tree().map_err(|e| e.to_string())?;
+    let tree = repo.find_tree(tree_id).map_err(|e| e.to_string())?;
+    let oid = head_commit
+        .amend(Some("HEAD"), None, None, None, Some(message), Some(&tree))
+        .map_err(|e| e.to_string())?;
+    Ok(format!("Amended {:.7}", oid))
+}
+
 pub fn git_create_branch(path: &Path, name: &str) -> Result<String, String> {
     let repo = Repository::open(path).map_err(|e| e.to_string())?;
     let head = repo.head().map_err(|e| e.to_string())?;
@@ -134,6 +147,21 @@ pub fn git_stash(path: &Path) -> Result<String, String> {
     repo.stash_save(&sig, "gitool stash", None)
         .map_err(|e| e.to_string())?;
     Ok("Stashed".to_string())
+}
+
+pub fn git_stash_with_message(path: &Path, message: &str) -> Result<String, String> {
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let sig = repo.signature().map_err(|e| e.to_string())?;
+    let mut repo = repo;
+    repo.stash_save(&sig, message, None).map_err(|e| e.to_string())?;
+    Ok(format!("Stashed: {}", message))
+}
+
+pub fn git_stash_drop(path: &Path, index: usize) -> Result<String, String> {
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let mut repo = repo;
+    repo.stash_drop(index).map_err(|e| e.to_string())?;
+    Ok(format!("Dropped stash@{{{}}}", index))
 }
 
 pub fn git_stash_pop(path: &Path) -> Result<String, String> {

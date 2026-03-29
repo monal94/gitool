@@ -35,8 +35,11 @@ impl App {
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         let path = repo.path.clone();
         if repo.dirty > 0 {
-            self.push_undo(UndoOp::Stash { repo_path: path.clone() });
-            self.dispatch(path, "Stash", git::git_stash);
+            self.mode = Mode::TextInput {
+                prompt: "Stash message: ".to_string(),
+                input: String::new(),
+                action: TextInputAction::StashMessage,
+            };
         } else if repo.stash > 0 {
             self.mode = Mode::Confirm {
                 message: format!("Pop stash for {}? [y/n]", repo.name),
@@ -45,6 +48,21 @@ impl App {
         } else {
             self.notify("Nothing to stash/pop".to_string(), false);
         }
+    }
+
+    pub fn stash_drop_selected(&mut self) {
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        if self.stash_list.is_empty() {
+            self.notify("No stash entries".to_string(), false);
+            return;
+        }
+        let Some(entry) = self.stash_list.get(self.selected_stash) else { return };
+        let path = repo.path.clone();
+        let index = entry.index;
+        self.mode = Mode::Confirm {
+            message: format!("Drop stash@{{{}}}? [y/n]", index),
+            action: ConfirmAction::StashDrop(path, index),
+        };
     }
 
     pub fn checkout_selected(&mut self) {
@@ -131,6 +149,29 @@ impl App {
         };
     }
 
+    pub fn amend_commit_prompt(&mut self) {
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        let path = &repo.path;
+        let old_message = match git2::Repository::open(path) {
+            Ok(r) => match r.head().and_then(|h| h.peel_to_commit()) {
+                Ok(commit) => commit.message().unwrap_or("").to_string(),
+                Err(_) => {
+                    self.notify("No commits to amend".to_string(), true);
+                    return;
+                }
+            },
+            Err(e) => {
+                self.notify(format!("Cannot open repo: {}", e), true);
+                return;
+            }
+        };
+        self.mode = Mode::TextInput {
+            prompt: "Amend commit message: ".to_string(),
+            input: old_message,
+            action: TextInputAction::AmendCommit,
+        };
+    }
+
     pub fn execute_confirm(&mut self) {
         let mode = std::mem::replace(&mut self.mode, Mode::Normal);
         if let Mode::Confirm { action, .. } = mode {
@@ -167,6 +208,13 @@ impl App {
                     self.reload_files();
                     self.rescan_selected_repo();
                 }
+                ConfirmAction::StashDrop(path, index) => {
+                    match git::git_stash_drop(&path, index) {
+                        Ok(msg) => self.notify(msg, false),
+                        Err(e) => self.notify(format!("Stash drop failed: {}", e), true),
+                    }
+                    self.rescan_selected_repo();
+                }
             }
         }
     }
@@ -174,6 +222,16 @@ impl App {
     pub fn cancel_confirm(&mut self) {
         self.mode = Mode::Normal;
         self.notify("Cancelled".to_string(), false);
+    }
+
+    pub fn open_in_editor(&mut self) {
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        let Some(file) = self.files.get(self.selected_file) else { return };
+        let full_path = repo.path.join(&file.path);
+        let editor = std::env::var("VISUAL")
+            .or_else(|_| std::env::var("EDITOR"))
+            .unwrap_or_else(|_| "vim".to_string());
+        self.editor_command = Some((editor, full_path));
     }
 
     pub(crate) fn rescan_selected_repo(&mut self) {
