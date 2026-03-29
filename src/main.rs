@@ -4,7 +4,7 @@ mod git;
 mod types;
 mod ui;
 
-use app::{App, Mode, Panel};
+use app::{App, Mode, Panel, Tab};
 use clap::Parser;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers, EnableMouseCapture, DisableMouseCapture, MouseEventKind},
@@ -102,6 +102,8 @@ fn run_app(
 fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
     match key {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
+        KeyCode::Char('1') => app.switch_tab(Tab::Status),
+        KeyCode::Char('2') => app.switch_tab(Tab::Log),
         KeyCode::Char('j') | KeyCode::Down => app.move_down(),
         KeyCode::Char('k') | KeyCode::Up => app.move_up(),
         KeyCode::Char(' ') if app.active_panel == Panel::RepoList => app.toggle_mark_repo(),

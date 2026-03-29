@@ -5,9 +5,10 @@ mod confirm;
 mod detail;
 mod diff;
 mod files;
+pub mod log_view;
 mod modal;
 
-use crate::app::{App, Mode, Panel};
+use crate::app::{App, Mode, Panel, Tab};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -43,8 +44,15 @@ pub fn render(f: &mut Frame, app: &App) {
 }
 
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
+    let tab_style_active = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let tab_style_inactive = Style::default().fg(Color::DarkGray);
+
     let mut spans = vec![
-        Span::styled(" WORKSPACE: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
+        Span::raw(" "),
+        Span::styled(" 1:Status ", if app.active_tab == Tab::Status { tab_style_active } else { tab_style_inactive }),
+        Span::raw(" "),
+        Span::styled(" 2:Log ", if app.active_tab == Tab::Log { tab_style_active } else { tab_style_inactive }),
+        Span::raw("  "),
         Span::styled(&app.workspace_name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
         Span::styled(
@@ -67,6 +75,13 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
 }
 
 fn render_main(f: &mut Frame, app: &App, area: Rect) {
+    match app.active_tab {
+        Tab::Status => render_status_tab(f, app, area),
+        Tab::Log => log_view::render(f, app, area),
+    }
+}
+
+fn render_status_tab(f: &mut Frame, app: &App, area: Rect) {
     match app.zoomed_panel {
         Some(Panel::RepoList) => {
             repo_list::render(f, app, area);
@@ -96,24 +111,31 @@ fn render_main(f: &mut Frame, app: &App, area: Rect) {
     }
 }
 
-fn render_footer(f: &mut Frame, _app: &App, area: Rect) {
-    let keys = vec![
-        ("j/k", "nav"),
-        ("Enter", "checkout"),
-        ("p", "pull"),
-        ("P", "push"),
-        ("f", "fetch"),
-        ("s", "stash"),
-        ("d", "diff"),
-        ("Tab", "panel"),
-        ("w", "workspace"),
-        ("h", "hide"),
-        ("H", "show hidden"),
-        ("/", "filter"),
-        ("`", "log"),
-        ("r", "refresh"),
-        ("q", "quit"),
-    ];
+fn render_footer(f: &mut Frame, app: &App, area: Rect) {
+    let keys = match app.active_tab {
+        Tab::Status => vec![
+            ("j/k", "nav"),
+            ("Tab", "panel"),
+            ("Enter", "checkout"),
+            ("p", "pull"),
+            ("P", "push"),
+            ("f", "fetch"),
+            ("s", "stash"),
+            ("d", "diff"),
+            ("/", "filter"),
+            ("`", "cmdlog"),
+            ("r", "refresh"),
+            ("q", "quit"),
+        ],
+        Tab::Log => vec![
+            ("j/k", "nav"),
+            ("Tab", "panel"),
+            ("d/u", "scroll"),
+            ("`", "cmdlog"),
+            ("r", "refresh"),
+            ("q", "quit"),
+        ],
+    };
 
     let spans: Vec<Span> = keys
         .iter()

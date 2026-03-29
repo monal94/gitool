@@ -8,10 +8,23 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
+pub enum Tab {
+    Status,
+    Log,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Panel {
     RepoList,
     Branches,
     Files,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub enum LogPanel {
+    Commits,
+    CommitFiles,
+    DiffPreview,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -73,6 +86,12 @@ pub struct CommitEntry {
 }
 
 #[derive(Debug, Clone)]
+pub struct CommitFileEntry {
+    pub path: String,
+    pub status: char, // 'M', 'A', 'D', 'R'
+}
+
+#[derive(Debug, Clone)]
 pub struct CommandLogEntry {
     pub timestamp: Instant,
     pub repo_name: String,
@@ -126,6 +145,13 @@ pub struct App {
     pub dirty: bool,
     pub zoomed_panel: Option<Panel>,
     pub undo_stack: Vec<UndoOp>,
+    pub active_tab: Tab,
+    pub active_log_panel: LogPanel,
+    pub commit_log_selected: usize,
+    pub commit_files: Vec<CommitFileEntry>,
+    pub commit_files_selected: usize,
+    pub commit_diff_preview: String,
+    pub commit_diff_scroll: usize,
     result_rx: Receiver<GitResult>,
     task_tx: Sender<GitResult>,
     _watcher: Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>,
@@ -176,6 +202,13 @@ impl App {
             dirty: true,
             zoomed_panel: None,
             undo_stack: Vec::new(),
+            active_tab: Tab::Status,
+            active_log_panel: LogPanel::Commits,
+            commit_log_selected: 0,
+            commit_files: Vec::new(),
+            commit_files_selected: 0,
+            commit_diff_preview: String::new(),
+            commit_diff_scroll: 0,
             result_rx,
             task_tx,
             _watcher: None,
@@ -369,6 +402,26 @@ impl App {
                 });
             }
         }
+    }
+
+    pub fn switch_tab(&mut self, tab: Tab) {
+        if self.active_tab == tab { return; }
+        self.active_tab = tab;
+        if tab == Tab::Log {
+            self.load_log();
+        }
+    }
+
+    /// Load the commit log for the currently selected repo into the Log tab state.
+    pub fn load_log(&mut self) {
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        self.commit_log = git::git_log(&repo.path, 100);
+        self.commit_log_selected = 0;
+        self.commit_files.clear();
+        self.commit_files_selected = 0;
+        self.commit_diff_preview.clear();
+        self.commit_diff_scroll = 0;
+        self.active_log_panel = LogPanel::Commits;
     }
 
     pub fn toggle_zoom(&mut self) {
