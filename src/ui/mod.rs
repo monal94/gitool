@@ -1,3 +1,4 @@
+mod blame;
 mod repo_list;
 mod branches;
 mod command_log;
@@ -39,6 +40,7 @@ pub fn render(f: &mut Frame, app: &App) {
         Mode::WorkspaceSwitcher => modal::render_workspace_switcher(f, app),
         Mode::Confirm { .. } => confirm::render(f, app),
         Mode::TextInput { .. } => render_text_input(f, app),
+        Mode::BlameView => blame::render(f, app),
         Mode::Normal | Mode::Filter => {}
     }
 }
@@ -125,6 +127,7 @@ fn render_footer(f: &mut Frame, app: &App, area: Rect) {
             ("u", "unstage"),
             ("x", "discard"),
             ("d", "diff"),
+            ("b", "blame"),
             ("`", "cmdlog"),
             ("q", "quit"),
         ],

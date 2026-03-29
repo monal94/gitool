@@ -77,6 +77,42 @@ pub fn git_show_files(path: &Path, hash: &str) -> Result<Vec<crate::app::CommitF
     Ok(files)
 }
 
+/// Run `git blame --line-porcelain` and parse the output into `BlameLine` entries.
+pub fn git_blame(path: &Path, file: &str) -> Result<Vec<crate::app::BlameLine>, String> {
+    let output = std::process::Command::new("git")
+        .args(["blame", "--line-porcelain", file])
+        .current_dir(path)
+        .output()
+        .map_err(|e| e.to_string())?;
+    if !output.status.success() {
+        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    }
+    let mut lines = Vec::new();
+    let mut current_hash = String::new();
+    let mut current_author = String::new();
+    let mut current_line_no = 0usize;
+    for raw_line in String::from_utf8_lossy(&output.stdout).lines() {
+        if raw_line.starts_with('\t') {
+            lines.push(crate::app::BlameLine {
+                hash: current_hash[..7.min(current_hash.len())].to_string(),
+                author: current_author.clone(),
+                line_no: current_line_no,
+                content: raw_line[1..].to_string(),
+            });
+        } else if let Some(rest) = raw_line.strip_prefix("author ") {
+            current_author = rest.to_string();
+        } else if raw_line.len() >= 40 && raw_line.chars().take(40).all(|c| c.is_ascii_hexdigit()) {
+            // Hash line: "<40-char-hash> <orig_lineno> <final_lineno> [<num_lines>]"
+            let parts: Vec<&str> = raw_line.split_whitespace().collect();
+            current_hash = parts[0].to_string();
+            if parts.len() >= 3 {
+                current_line_no = parts[2].parse().unwrap_or(0);
+            }
+        }
+    }
+    Ok(lines)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

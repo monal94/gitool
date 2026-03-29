@@ -80,6 +80,7 @@ pub enum Mode {
         action: TextInputAction,
     },
     Filter,
+    BlameView,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -89,6 +90,7 @@ pub enum TextInputAction {
     CommitMessage,
     AmendCommit,
     StashMessage,
+    CreateTag(String),
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -100,6 +102,8 @@ pub enum ConfirmAction {
     DeleteBranch(PathBuf, String),
     MergeBranch(PathBuf, String),
     StashDrop(PathBuf, usize),
+    CherryPick(PathBuf, String),
+    RevertCommit(PathBuf, String),
 }
 
 #[derive(Debug)]
@@ -130,6 +134,14 @@ pub struct CommitEntry {
 pub struct CommitFileEntry {
     pub path: String,
     pub status: char, // 'M', 'A', 'D', 'R'
+}
+
+#[derive(Debug, Clone)]
+pub struct BlameLine {
+    pub hash: String,
+    pub author: String,
+    pub line_no: usize,
+    pub content: String,
 }
 
 #[derive(Debug, Clone)]
@@ -201,6 +213,9 @@ pub struct App {
     // Diff overlay
     pub diff_content: String,
     pub diff_scroll: u16,
+    // Blame overlay
+    pub blame_content: Vec<BlameLine>,
+    pub blame_scroll: usize,
     // Command log overlay
     pub command_log_scroll: u16,
     // Workspace
@@ -266,6 +281,8 @@ impl App {
             preview_scroll: 0,
             diff_content: String::new(),
             diff_scroll: 0,
+            blame_content: Vec::new(),
+            blame_scroll: 0,
             command_log_scroll: 0,
             config,
             workspace_path,

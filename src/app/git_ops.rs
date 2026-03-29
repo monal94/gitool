@@ -215,6 +215,18 @@ impl App {
                     }
                     self.rescan_selected_repo();
                 }
+                ConfirmAction::CherryPick(path, hash) => {
+                    let h = hash.clone();
+                    self.dispatch(path, &format!("Cherry-pick {}", hash), move |p| {
+                        git::git_cherry_pick(p, &h)
+                    });
+                }
+                ConfirmAction::RevertCommit(path, hash) => {
+                    let h = hash.clone();
+                    self.dispatch(path, &format!("Revert {}", hash), move |p| {
+                        git::git_revert(p, &h)
+                    });
+                }
             }
         }
     }
@@ -232,6 +244,22 @@ impl App {
             .or_else(|_| std::env::var("EDITOR"))
             .unwrap_or_else(|_| "vim".to_string());
         self.editor_command = Some((editor, full_path));
+    }
+
+    pub fn show_blame(&mut self) {
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        let Some(file) = self.files.get(self.selected_file) else { return };
+        let path = repo.path.clone();
+        let file_path = file.path.clone();
+        match git::git_blame(&path, &file_path) {
+            Ok(lines) if !lines.is_empty() => {
+                self.blame_content = lines;
+                self.blame_scroll = 0;
+                self.mode = Mode::BlameView;
+            }
+            Ok(_) => self.notify("No blame data".to_string(), false),
+            Err(e) => self.notify(format!("Blame failed: {}", e), true),
+        }
     }
 
     pub(crate) fn rescan_selected_repo(&mut self) {

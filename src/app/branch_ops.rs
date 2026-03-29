@@ -94,6 +94,13 @@ impl App {
                         git::git_stash_with_message(p, &msg)
                     });
                 }
+                TextInputAction::CreateTag(hash) => {
+                    let name = input;
+                    let h = hash.clone();
+                    self.dispatch(path, &format!("Tag {} at {}", name, hash), move |p| {
+                        git::git_create_tag(p, &name, &h)
+                    });
+                }
             }
         }
     }

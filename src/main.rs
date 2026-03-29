@@ -5,7 +5,7 @@ mod highlight;
 mod types;
 mod ui;
 
-use app::{App, Mode, SidePanel};
+use app::{App, ConfirmAction, Mode, SidePanel, TextInputAction};
 use clap::Parser;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers, EnableMouseCapture, DisableMouseCapture, MouseEventKind},
@@ -77,6 +77,7 @@ fn run_app(
                         Mode::Confirm { .. } => handle_confirm_mode(app, key.code),
                         Mode::TextInput { .. } => handle_text_input_mode(app, key.code),
                         Mode::Filter => handle_filter_mode(app, key.code),
+                        Mode::BlameView => handle_blame_mode(app, key.code),
                     }
                     app.mark_dirty();
                 }
@@ -198,7 +199,27 @@ fn handle_files_panel(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) {
         KeyCode::Char('c') => app.create_commit_prompt(),
         KeyCode::Char('A') => app.amend_commit_prompt(),
         KeyCode::Char('d') | KeyCode::Enter => app.show_file_diff(),
+        KeyCode::Char('b') => app.show_blame(),
         KeyCode::Char('e') => app.open_in_editor(),
+        _ => {}
+    }
+}
+
+fn handle_blame_mode(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Esc | KeyCode::Char('q') => app.mode = Mode::Normal,
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.blame_scroll = app.blame_scroll.saturating_add(1);
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.blame_scroll = app.blame_scroll.saturating_sub(1);
+        }
+        KeyCode::Char('d') => {
+            app.blame_scroll = app.blame_scroll.saturating_add(20);
+        }
+        KeyCode::Char('u') => {
+            app.blame_scroll = app.blame_scroll.saturating_sub(20);
+        }
         _ => {}
     }
 }
@@ -234,6 +255,40 @@ fn handle_commits_panel(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) {
                     Ok(()) => app.notify(format!("Copied: {}", hash), false),
                     Err(e) => app.notify(format!("Clipboard error: {}", e), true),
                 }
+            }
+        }
+        KeyCode::Char('C') => {
+            if let Some(entry) = app.commit_log.get(app.commit_log_selected) {
+                let hash = entry.hash.clone();
+                if let Some(repo) = app.repos.get(app.selected_repo) {
+                    let path = repo.path.clone();
+                    app.mode = Mode::Confirm {
+                        message: format!("Cherry-pick {}? [y/n]", hash),
+                        action: ConfirmAction::CherryPick(path, hash),
+                    };
+                }
+            }
+        }
+        KeyCode::Char('X') => {
+            if let Some(entry) = app.commit_log.get(app.commit_log_selected) {
+                let hash = entry.hash.clone();
+                if let Some(repo) = app.repos.get(app.selected_repo) {
+                    let path = repo.path.clone();
+                    app.mode = Mode::Confirm {
+                        message: format!("Revert {}? [y/n]", hash),
+                        action: ConfirmAction::RevertCommit(path, hash),
+                    };
+                }
+            }
+        }
+        KeyCode::Char('t') => {
+            if let Some(entry) = app.commit_log.get(app.commit_log_selected) {
+                let hash = entry.hash.clone();
+                app.mode = Mode::TextInput {
+                    prompt: format!("Tag name for {}: ", hash),
+                    input: String::new(),
+                    action: TextInputAction::CreateTag(hash),
+                };
             }
         }
         _ => {}

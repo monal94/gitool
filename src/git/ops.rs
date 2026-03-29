@@ -171,6 +171,18 @@ pub fn git_stash_pop(path: &Path) -> Result<String, String> {
     Ok("Stash popped".to_string())
 }
 
+pub fn git_cherry_pick(path: &Path, hash: &str) -> Result<String, String> {
+    run_git(path, &["cherry-pick", hash])
+}
+
+pub fn git_revert(path: &Path, hash: &str) -> Result<String, String> {
+    run_git(path, &["revert", "--no-edit", hash])
+}
+
+pub fn git_create_tag(path: &Path, name: &str, hash: &str) -> Result<String, String> {
+    run_git(path, &["tag", name, hash])
+}
+
 pub(crate) fn run_git(path: &Path, args: &[&str]) -> Result<String, String> {
     let output = Command::new("git")
         .args(args)
