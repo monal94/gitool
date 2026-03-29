@@ -318,11 +318,29 @@ pub fn get_file_statuses(path: &Path) -> Vec<FileEntry> {
 }
 
 pub fn git_stage(path: &Path, file: &str) -> Result<String, String> {
-    run_git(path, &["add", file])
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let mut index = repo.index().map_err(|e| e.to_string())?;
+    index.add_path(Path::new(file)).map_err(|e| e.to_string())?;
+    index.write().map_err(|e| e.to_string())?;
+    Ok(format!("Staged {}", file))
 }
 
 pub fn git_unstage(path: &Path, file: &str) -> Result<String, String> {
-    run_git(path, &["restore", "--staged", file])
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let head = repo.head().and_then(|h| h.peel_to_tree());
+    let mut index = repo.index().map_err(|e| e.to_string())?;
+    match head {
+        Ok(tree) => {
+            repo.reset_default(Some(&tree.into_object()), [file])
+                .map_err(|e| e.to_string())?;
+        }
+        Err(_) => {
+            // No HEAD (initial commit) — remove from index
+            index.remove_path(Path::new(file)).map_err(|e| e.to_string())?;
+            index.write().map_err(|e| e.to_string())?;
+        }
+    }
+    Ok(format!("Unstaged {}", file))
 }
 
 pub fn git_discard(path: &Path, file: &str, is_untracked: bool) -> Result<String, String> {
@@ -331,111 +349,197 @@ pub fn git_discard(path: &Path, file: &str, is_untracked: bool) -> Result<String
             .map(|_| format!("Removed {}", file))
             .map_err(|e| e.to_string())
     } else {
-        run_git(path, &["checkout", "--", file])
+        let repo = Repository::open(path).map_err(|e| e.to_string())?;
+        repo.checkout_head(Some(
+            git2::build::CheckoutBuilder::new()
+                .force()
+                .path(file),
+        )).map_err(|e| e.to_string())?;
+        Ok(format!("Discarded {}", file))
     }
 }
 
 pub fn git_log(path: &Path, limit: usize) -> Vec<crate::app::CommitEntry> {
-    let output = Command::new("git")
-        .args(["log", &format!("-{}", limit), "--format=%h\t%an\t%cr\t%s"])
-        .current_dir(path)
-        .output();
+    let Ok(repo) = Repository::open(path) else { return Vec::new() };
+    let Ok(mut revwalk) = repo.revwalk() else { return Vec::new() };
+    revwalk.set_sorting(git2::Sort::TIME).ok();
+    if revwalk.push_head().is_err() { return Vec::new(); }
 
-    let Ok(output) = output else { return Vec::new() };
-    if !output.status.success() { return Vec::new(); }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs() as i64;
 
-    String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(4, '\t').collect();
-            if parts.len() == 4 {
-                Some(crate::app::CommitEntry {
-                    hash: parts[0].to_string(),
-                    author: parts[1].to_string(),
-                    date: parts[2].to_string(),
-                    message: parts[3].to_string(),
-                })
-            } else {
-                None
-            }
+    revwalk
+        .filter_map(|oid| oid.ok())
+        .filter_map(|oid| repo.find_commit(oid).ok())
+        .take(limit)
+        .map(|commit| {
+            let hash = format!("{:.7}", commit.id());
+            let author = commit.author().name().unwrap_or("").to_string();
+            let message = commit.summary().unwrap_or("").to_string();
+            let time = commit.time().seconds();
+            let elapsed = now - time;
+            let date = format_elapsed(elapsed);
+            crate::app::CommitEntry { hash, author, date, message }
         })
         .collect()
 }
 
-/// Get files changed in a specific commit.
+fn format_elapsed(secs: i64) -> String {
+    if secs < 60 { return format!("{} seconds ago", secs); }
+    let mins = secs / 60;
+    if mins < 60 { return format!("{} minutes ago", mins); }
+    let hours = mins / 60;
+    if hours < 24 { return format!("{} hours ago", hours); }
+    let days = hours / 24;
+    if days < 30 { return format!("{} days ago", days); }
+    let months = days / 30;
+    if months < 12 { return format!("{} months ago", months); }
+    format!("{} years ago", days / 365)
+}
+
+/// Get files changed in a specific commit using git2.
 pub fn git_show_files(path: &Path, hash: &str) -> Result<Vec<crate::app::CommitFileEntry>, String> {
-    let output = Command::new("git")
-        .args(["diff-tree", "--no-commit-id", "-r", "-M", "--name-status", hash])
-        .current_dir(path)
-        .output()
-        .map_err(|e| e.to_string())?;
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let obj = repo.revparse_single(hash).map_err(|e| e.to_string())?;
+    let commit = obj.peel_to_commit().map_err(|e| e.to_string())?;
+    let tree = commit.tree().map_err(|e| e.to_string())?;
 
-    if !output.status.success() {
-        return Err(String::from_utf8_lossy(&output.stderr).trim().to_string());
+    let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+
+    let diff = repo.diff_tree_to_tree(
+        parent_tree.as_ref(), Some(&tree), None,
+    ).map_err(|e| e.to_string())?;
+    let mut find_opts = git2::DiffFindOptions::new();
+    find_opts.renames(true);
+    let mut diff = diff;
+    let _ = diff.find_similar(Some(&mut find_opts));
+
+    let mut files = Vec::new();
+    for delta in diff.deltas() {
+        let status = match delta.status() {
+            git2::Delta::Added => 'A',
+            git2::Delta::Deleted => 'D',
+            git2::Delta::Modified => 'M',
+            git2::Delta::Renamed => 'R',
+            git2::Delta::Copied => 'C',
+            _ => '?',
+        };
+        let file_path = delta.new_file().path()
+            .or_else(|| delta.old_file().path())
+            .map(|p| p.to_string_lossy().to_string())
+            .unwrap_or_default();
+        files.push(crate::app::CommitFileEntry { status, path: file_path });
     }
-
-    Ok(String::from_utf8_lossy(&output.stdout)
-        .lines()
-        .filter_map(|line| {
-            let parts: Vec<&str> = line.splitn(2, '\t').collect();
-            if parts.len() == 2 {
-                Some(crate::app::CommitFileEntry {
-                    status: parts[0].chars().next().unwrap_or('?'),
-                    path: parts[1].to_string(),
-                })
-            } else {
-                None
-            }
-        })
-        .collect())
+    Ok(files)
 }
 
-/// Get the full diff for a specific commit.
+/// Get the full diff for a specific commit using git2.
 pub fn git_diff_commit(path: &Path, hash: &str) -> Result<String, String> {
-    // Try diff with parent first; falls back to show for root commits
-    let result = run_git(path, &["diff", &format!("{}~1..{}", hash, hash)]);
-    if result.is_err() {
-        // Root commit — use git show
-        return run_git(path, &["show", "--format=", "--", hash]);
-    }
-    result
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let obj = repo.revparse_single(hash).map_err(|e| e.to_string())?;
+    let commit = obj.peel_to_commit().map_err(|e| e.to_string())?;
+    let tree = commit.tree().map_err(|e| e.to_string())?;
+    let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+
+    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), None)
+        .map_err(|e| e.to_string())?;
+    diff_to_string(&diff)
 }
 
-/// Get the diff for a specific file in a commit.
+/// Get the diff for a specific file in a commit using git2.
 pub fn git_diff_commit_file(path: &Path, hash: &str, file: &str) -> Result<String, String> {
-    let result = run_git(path, &["diff", &format!("{}~1..{}", hash, hash), "--", file]);
-    if result.is_err() {
-        return run_git(path, &["show", "--format=", hash, "--", file]);
-    }
-    result
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let obj = repo.revparse_single(hash).map_err(|e| e.to_string())?;
+    let commit = obj.peel_to_commit().map_err(|e| e.to_string())?;
+    let tree = commit.tree().map_err(|e| e.to_string())?;
+    let parent_tree = commit.parent(0).ok().and_then(|p| p.tree().ok());
+
+    let mut opts = git2::DiffOptions::new();
+    opts.pathspec(file);
+    let diff = repo.diff_tree_to_tree(parent_tree.as_ref(), Some(&tree), Some(&mut opts))
+        .map_err(|e| e.to_string())?;
+    diff_to_string(&diff)
 }
 
-/// Get the diff for a specific file in the working tree.
+/// Get the diff for a specific file in the working tree using git2.
 pub fn git_diff_file(path: &Path, file: &str, staged: bool) -> Result<String, String> {
-    if staged {
-        run_git(path, &["diff", "--cached", "--", file])
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let mut opts = git2::DiffOptions::new();
+    opts.pathspec(file);
+
+    let diff = if staged {
+        let head_tree = repo.head().ok()
+            .and_then(|h| h.peel_to_tree().ok());
+        repo.diff_tree_to_index(head_tree.as_ref(), None, Some(&mut opts))
     } else {
-        run_git(path, &["diff", "--", file])
-    }
+        repo.diff_index_to_workdir(None, Some(&mut opts))
+    }.map_err(|e| e.to_string())?;
+
+    diff_to_string(&diff)
+}
+
+/// Convert a git2::Diff to a patch string.
+fn diff_to_string(diff: &git2::Diff) -> Result<String, String> {
+    let mut output = String::new();
+    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        match line.origin() {
+            '+' | '-' | ' ' => output.push(line.origin()),
+            _ => {}
+        }
+        output.push_str(&String::from_utf8_lossy(line.content()));
+        true
+    }).map_err(|e| e.to_string())?;
+    Ok(output)
 }
 
 pub fn git_commit(path: &Path, message: &str) -> Result<String, String> {
-    run_git(path, &["commit", "-m", message])
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let sig = repo.signature().map_err(|e| e.to_string())?;
+    let mut index = repo.index().map_err(|e| e.to_string())?;
+    let tree_id = index.write_tree().map_err(|e| e.to_string())?;
+    let tree = repo.find_tree(tree_id).map_err(|e| e.to_string())?;
+    let parent = repo.head().ok()
+        .and_then(|h| h.peel_to_commit().ok());
+    let parents: Vec<&git2::Commit> = parent.as_ref().into_iter().collect();
+    let oid = repo.commit(Some("HEAD"), &sig, &sig, message, &tree, &parents)
+        .map_err(|e| e.to_string())?;
+    Ok(format!("{:.7}", oid))
 }
 
 pub fn git_create_branch(path: &Path, name: &str) -> Result<String, String> {
-    run_git(path, &["checkout", "-b", "--", name])
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let head = repo.head().map_err(|e| e.to_string())?;
+    let commit = head.peel_to_commit().map_err(|e| e.to_string())?;
+    repo.branch(name, &commit, false).map_err(|e| e.to_string())?;
+    // Also checkout the new branch
+    let refname = format!("refs/heads/{}", name);
+    repo.set_head(&refname).map_err(|e| e.to_string())?;
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .map_err(|e| e.to_string())?;
+    Ok(format!("Created and switched to {}", name))
 }
 
 pub fn git_delete_branch(path: &Path, name: &str) -> Result<String, String> {
-    run_git(path, &["branch", "-d", "--", name])
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let mut branch = repo.find_branch(name, BranchType::Local)
+        .map_err(|e| e.to_string())?;
+    branch.delete().map_err(|e| e.to_string())?;
+    Ok(format!("Deleted {}", name))
 }
 
 pub fn git_rename_branch(path: &Path, old: &str, new: &str) -> Result<String, String> {
-    run_git(path, &["branch", "-m", "--", old, new])
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    repo.find_branch(old, BranchType::Local)
+        .map_err(|e| e.to_string())?
+        .rename(new, false)
+        .map_err(|e| e.to_string())?;
+    Ok(format!("Renamed {} -> {}", old, new))
 }
 
 pub fn git_merge(path: &Path, branch: &str) -> Result<String, String> {
+    // git2 merge is complex (conflict resolution) — keep CLI for this
     run_git(path, &["merge", "--", branch])
 }
 
@@ -454,19 +558,46 @@ pub fn git_fetch(path: &Path) -> Result<String, String> {
 }
 
 pub fn git_checkout(path: &Path, branch: &str) -> Result<String, String> {
-    run_git(path, &["checkout", "--", branch])
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let refname = format!("refs/heads/{}", branch);
+    // Try local branch first, then remote tracking
+    if repo.find_reference(&refname).is_ok() {
+        repo.set_head(&refname).map_err(|e| e.to_string())?;
+    } else {
+        // Remote-only branch: create local tracking branch
+        let remote_ref = format!("refs/remotes/origin/{}", branch);
+        let reference = repo.find_reference(&remote_ref).map_err(|e| e.to_string())?;
+        let commit = reference.peel_to_commit().map_err(|e| e.to_string())?;
+        repo.branch(branch, &commit, false).map_err(|e| e.to_string())?;
+        repo.set_head(&refname).map_err(|e| e.to_string())?;
+    }
+    repo.checkout_head(Some(git2::build::CheckoutBuilder::new().force()))
+        .map_err(|e| e.to_string())?;
+    Ok(format!("Switched to {}", branch))
 }
 
 pub fn git_stash(path: &Path) -> Result<String, String> {
-    run_git(path, &["stash"])
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let sig = repo.signature().map_err(|e| e.to_string())?;
+    // git2 stash_save requires &mut
+    let mut repo = repo;
+    repo.stash_save(&sig, "gitool stash", None)
+        .map_err(|e| e.to_string())?;
+    Ok("Stashed".to_string())
 }
 
 pub fn git_stash_pop(path: &Path) -> Result<String, String> {
-    run_git(path, &["stash", "pop"])
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let mut repo = repo;
+    repo.stash_pop(0, None).map_err(|e| e.to_string())?;
+    Ok("Stash popped".to_string())
 }
 
 pub fn git_diff(path: &Path) -> Result<String, String> {
-    run_git(path, &["diff"])
+    let repo = Repository::open(path).map_err(|e| e.to_string())?;
+    let diff = repo.diff_index_to_workdir(None, None)
+        .map_err(|e| e.to_string())?;
+    diff_to_string(&diff)
 }
 
 fn run_git(path: &Path, args: &[&str]) -> Result<String, String> {
