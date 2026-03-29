@@ -23,4 +23,5 @@ pub struct RepoStatus {
     pub dirty: usize,
     pub stash: usize,
     pub branches: Vec<BranchEntry>,
+    pub branches_loaded: bool,
 }

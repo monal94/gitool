@@ -48,7 +48,6 @@ pub fn scan_repo(path: &Path) -> Option<RepoStatus> {
     let (ahead, behind) = upstream_drift(&repo);
     let dirty = dirty_count(&repo);
     let stash = stash_count(path);
-    let branches = collect_branches(&repo, &branch);
 
     Some(RepoStatus {
         name,
@@ -58,8 +57,18 @@ pub fn scan_repo(path: &Path) -> Option<RepoStatus> {
         behind,
         dirty,
         stash,
-        branches,
+        branches: Vec::new(),
+        branches_loaded: false,
     })
+}
+
+/// Load branches and drift for a single repo (called on-demand).
+pub fn load_branches(path: &Path) -> Vec<BranchEntry> {
+    let Some(repo) = Repository::open(path).ok() else {
+        return Vec::new();
+    };
+    let branch = current_branch(&repo);
+    collect_branches(&repo, &branch)
 }
 
 fn current_branch(repo: &Repository) -> String {

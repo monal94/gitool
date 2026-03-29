@@ -103,7 +103,7 @@ impl App {
 
         let (task_tx, result_rx) = mpsc::channel();
 
-        Self {
+        let mut app = Self {
             repos,
             all_repos,
             selected_repo: 0,
@@ -126,7 +126,9 @@ impl App {
             command_log_scroll: 0,
             result_rx,
             task_tx,
-        }
+        };
+        app.ensure_branches_loaded();
+        app
     }
 
     pub fn selected_repo(&self) -> Option<&RepoStatus> {
@@ -189,11 +191,16 @@ impl App {
                     }
                     // Rescan the affected repo
                     if let Some(new_status) = git::scan_repo(&repo_path) {
+                        let is_selected = self.repos.get(self.selected_repo)
+                            .is_some_and(|r| r.path == repo_path);
                         if let Some(pos) = self.repos.iter().position(|r| r.path == repo_path) {
                             self.repos[pos] = new_status.clone();
                         }
                         if let Some(pos) = self.all_repos.iter().position(|r| r.path == repo_path) {
                             self.all_repos[pos] = new_status;
+                        }
+                        if is_selected {
+                            self.ensure_branches_loaded();
                         }
                     }
                 }
@@ -253,6 +260,7 @@ impl App {
             self.selected_repo = self.repos.len().saturating_sub(1);
         }
         self.selected_branch = 0;
+        self.ensure_branches_loaded();
     }
 
     pub fn notify(&mut self, message: String, is_error: bool) {
@@ -271,6 +279,25 @@ impl App {
         }
     }
 
+    /// Load branches for the currently selected repo if not already loaded.
+    pub fn ensure_branches_loaded(&mut self) {
+        if let Some(repo) = self.repos.get(self.selected_repo) {
+            if !repo.branches_loaded {
+                let path = repo.path.clone();
+                let branches = git::load_branches(&path);
+                if let Some(repo) = self.repos.get_mut(self.selected_repo) {
+                    repo.branches = branches.clone();
+                    repo.branches_loaded = true;
+                }
+                // Also update all_repos
+                if let Some(pos) = self.all_repos.iter().position(|r| r.path == path) {
+                    self.all_repos[pos].branches = branches;
+                    self.all_repos[pos].branches_loaded = true;
+                }
+            }
+        }
+    }
+
     // Navigation
 
     pub fn move_up(&mut self) {
@@ -279,6 +306,7 @@ impl App {
                 if self.selected_repo > 0 {
                     self.selected_repo -= 1;
                     self.selected_branch = 0;
+                    self.ensure_branches_loaded();
                 }
             }
             Panel::Branches => {
@@ -295,6 +323,7 @@ impl App {
                 if self.selected_repo + 1 < self.repos.len() {
                     self.selected_repo += 1;
                     self.selected_branch = 0;
+                    self.ensure_branches_loaded();
                 }
             }
             Panel::Branches => {
