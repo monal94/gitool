@@ -155,27 +155,26 @@ fn render_diff_preview(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let lines: Vec<Line> = if let Some(ref highlighted) = app.highlighted_commit_diff {
-        highlighted.clone()
-    } else {
-        super::diff::fallback_lines(&app.commit_diff_preview)
-    };
+    let viewport_height = area.height.saturating_sub(2) as usize;
+    let total_lines = app.commit_diff_preview.lines().count();
+    let scroll = app.commit_diff_scroll;
 
-    let total_lines = lines.len();
-    let scroll = app.commit_diff_scroll as u16;
+    let lines: Vec<Line> = app.highlighter.highlight_diff_window(
+        &app.commit_diff_preview,
+        scroll,
+        viewport_height + 10,
+    );
 
     let block = Block::default()
         .title(" Diff ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
-    let paragraph = Paragraph::new(lines)
-        .block(block)
-        .scroll((scroll, 0));
+    let paragraph = Paragraph::new(lines).block(block);
 
     f.render_widget(paragraph, area);
 
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
-    let mut scrollbar_state = ScrollbarState::new(total_lines).position(app.commit_diff_scroll);
+    let mut scrollbar_state = ScrollbarState::new(total_lines).position(scroll);
     f.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
 }

@@ -490,17 +490,29 @@ pub fn git_diff_file(path: &Path, file: &str, staged: bool) -> Result<String, St
     diff_to_string(&diff)
 }
 
-/// Convert a git2::Diff to a patch string.
+const MAX_DIFF_LINES: usize = 50_000;
+
+/// Convert a git2::Diff to a patch string, capped at MAX_DIFF_LINES.
 fn diff_to_string(diff: &git2::Diff) -> Result<String, String> {
-    let mut output = String::new();
+    let mut output = String::with_capacity(64 * 1024); // pre-alloc 64KB
+    let mut line_count = 0usize;
+    let mut truncated = false;
     diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+        if line_count >= MAX_DIFF_LINES {
+            truncated = true;
+            return false; // stop iteration
+        }
         match line.origin() {
             '+' | '-' | ' ' => output.push(line.origin()),
             _ => {}
         }
         output.push_str(&String::from_utf8_lossy(line.content()));
+        line_count += 1;
         true
     }).map_err(|e| e.to_string())?;
+    if truncated {
+        output.push_str("\n\n... diff truncated (50000+ lines) ...\n");
+    }
     Ok(output)
 }
 

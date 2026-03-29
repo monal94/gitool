@@ -21,6 +21,7 @@ impl Highlighter {
     /// Detects language from diff headers and applies syntax highlighting
     /// within added/removed/context lines. Diff markers (+/-/@@) get
     /// their own coloring overlaid.
+    #[allow(dead_code)]
     pub fn highlight_diff(&self, content: &str) -> Vec<Line<'static>> {
         let theme = &self.ts.themes["base16-ocean.dark"];
         let mut current_syntax = self.ps.find_syntax_plain_text();
@@ -96,6 +97,71 @@ impl Highlighter {
 
                 Line::from(spans)
             })
+            .collect()
+    }
+
+    /// Highlight only a window of lines from the diff for rendering.
+    /// This avoids processing 100k lines when only 50 are visible.
+    pub fn highlight_diff_window(&self, content: &str, start: usize, count: usize) -> Vec<Line<'static>> {
+        let theme = &self.ts.themes["base16-ocean.dark"];
+        let mut current_syntax = self.ps.find_syntax_plain_text();
+        let mut highlighter = HighlightLines::new(current_syntax, theme);
+        let end = start + count;
+
+        content
+            .lines()
+            .enumerate()
+            .map(|(i, line)| {
+                // Track syntax changes even for lines before the window
+                if line.starts_with("diff --git") {
+                    if let Some(ext) = extract_extension(line)
+                        && let Some(syntax) = self.ps.find_syntax_by_extension(&ext) {
+                            current_syntax = syntax;
+                            highlighter = HighlightLines::new(current_syntax, theme);
+                        }
+                }
+
+                // Only fully process lines in the visible window
+                if i < start || i >= end {
+                    return Line::from(""); // placeholder for out-of-window lines
+                }
+
+                if line.starts_with("diff --git") || line.starts_with("index ") || line.starts_with("---") || line.starts_with("+++") {
+                    return make_header_line(line);
+                }
+                if line.starts_with("@@") {
+                    return Line::from(Span::styled(line.to_string(), Style::default().fg(Color::Cyan)));
+                }
+
+                let (marker, code, base_fg) = if let Some(rest) = line.strip_prefix('+') {
+                    ("+", rest, Color::Green)
+                } else if let Some(rest) = line.strip_prefix('-') {
+                    ("-", rest, Color::Red)
+                } else {
+                    let spans = syntect_to_spans(&mut highlighter, line, &self.ps);
+                    if spans.is_empty() {
+                        return Line::from(Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)));
+                    }
+                    return Line::from(spans);
+                };
+
+                let code_spans = syntect_to_spans(&mut highlighter, code, &self.ps);
+                let mut spans = vec![Span::styled(marker.to_string(), Style::default().fg(base_fg).add_modifier(Modifier::BOLD))];
+                if code_spans.is_empty() {
+                    spans.push(Span::styled(code.to_string(), Style::default().fg(base_fg)));
+                } else {
+                    for span in code_spans {
+                        let fg = match span.style.fg {
+                            Some(Color::Reset) | Some(Color::DarkGray) | None => base_fg,
+                            Some(c) => c,
+                        };
+                        spans.push(Span::styled(span.content.into_owned(), Style::default().fg(fg)));
+                    }
+                }
+                Line::from(spans)
+            })
+            .skip(start)
+            .take(count)
             .collect()
     }
 }

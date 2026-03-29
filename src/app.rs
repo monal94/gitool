@@ -166,9 +166,7 @@ pub struct App {
     pub commit_files_selected: usize,
     pub commit_diff_preview: String,
     pub commit_diff_scroll: usize,
-    pub highlighted_diff: Option<Vec<ratatui::text::Line<'static>>>,
-    pub highlighted_commit_diff: Option<Vec<ratatui::text::Line<'static>>>,
-    highlighter: crate::highlight::Highlighter,
+    pub highlighter: crate::highlight::Highlighter,
     cached_repo: Option<git2::Repository>,
     cached_repo_path: Option<PathBuf>,
     result_rx: Receiver<GitResult>,
@@ -227,8 +225,6 @@ impl App {
             commit_files_selected: 0,
             commit_diff_preview: String::new(),
             commit_diff_scroll: 0,
-            highlighted_diff: None,
-            highlighted_commit_diff: None,
             highlighter: crate::highlight::Highlighter::new(),
             cached_repo: None,
             cached_repo_path: None,
@@ -328,7 +324,6 @@ impl App {
                     if content.is_empty() {
                         self.notify("No changes to diff".to_string(), false);
                     } else {
-                        self.highlighted_diff = Some(self.highlighter.highlight_diff(&content));
                         self.diff_content = content;
                         self.diff_scroll = 0;
                         self.mode = Mode::DiffView;
@@ -380,21 +375,11 @@ impl App {
                     self.commit_files_selected = 0;
                     self.commit_diff_preview = diff;
                     self.commit_diff_scroll = 0;
-                    if !self.commit_diff_preview.is_empty() {
-                        self.highlighted_commit_diff = Some(self.highlighter.highlight_diff(&self.commit_diff_preview));
-                    } else {
-                        self.highlighted_commit_diff = None;
-                    }
                     self.dirty = true;
                 }
                 GitResult::CommitFileDiffReady { diff } => {
                     self.commit_diff_preview = diff;
                     self.commit_diff_scroll = 0;
-                    if !self.commit_diff_preview.is_empty() {
-                        self.highlighted_commit_diff = Some(self.highlighter.highlight_diff(&self.commit_diff_preview));
-                    } else {
-                        self.highlighted_commit_diff = None;
-                    }
                     self.dirty = true;
                 }
             }
@@ -515,7 +500,7 @@ impl App {
         self.commit_files.clear();
         self.commit_files_selected = 0;
         self.commit_diff_preview.clear();
-        self.highlighted_commit_diff = None;
+
         self.commit_diff_scroll = 0;
         self.active_log_panel = LogPanel::Commits;
         // Load in background
@@ -530,7 +515,7 @@ impl App {
         let Some(entry) = self.commit_log.get(self.commit_log_selected) else {
             self.commit_files.clear();
             self.commit_diff_preview.clear();
-            self.highlighted_commit_diff = None;
+    
             return;
         };
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
