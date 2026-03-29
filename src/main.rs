@@ -116,6 +116,7 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => app.unmark_all_repos(),
         KeyCode::Char('z') if modifiers.contains(KeyModifiers::CONTROL) => app.undo(),
         KeyCode::Tab => app.next_panel(),
+        KeyCode::Enter if app.active_panel == Panel::Files => app.show_file_diff(),
         KeyCode::Enter => app.checkout_selected(),
         KeyCode::Char('p') => {
             if modifiers.contains(KeyModifiers::SHIFT) {
@@ -130,6 +131,7 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('x') if app.active_panel == Panel::Files => app.discard_selected_file(),
         KeyCode::Char('f') => app.fetch(),
         KeyCode::Char('s') => app.stash_toggle(),
+        KeyCode::Char('d') if app.active_panel == Panel::Files => app.show_file_diff(),
         KeyCode::Char('d') => app.show_diff(),
         KeyCode::Char('r') => {
             app.refresh();

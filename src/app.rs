@@ -768,6 +768,21 @@ impl App {
         });
     }
 
+    pub fn show_file_diff(&mut self) {
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        let Some(file) = self.files.get(self.selected_file) else { return };
+        let path = repo.path.clone();
+        let file_path = file.path.clone();
+        let staged = file.staged;
+        let tx = self.task_tx.clone();
+        std::thread::spawn(move || {
+            match git::git_diff_file(&path, &file_path, staged) {
+                Ok(content) => { let _ = tx.send(GitResult::DiffReady { content }); }
+                Err(e) => { let _ = tx.send(GitResult::DiffError { message: e }); }
+            }
+        });
+    }
+
     pub fn stage_selected_file(&mut self) {
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         let Some(file) = self.files.get(self.selected_file) else { return };
