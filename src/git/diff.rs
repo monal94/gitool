@@ -62,7 +62,7 @@ fn diff_to_string(diff: &git2::Diff) -> Result<String, String> {
     let mut output = String::with_capacity(64 * 1024); // pre-alloc 64KB
     let mut line_count = 0usize;
     let mut truncated = false;
-    diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
+    let print_result = diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
         if line_count >= MAX_DIFF_LINES {
             truncated = true;
             return false; // stop iteration
@@ -74,7 +74,12 @@ fn diff_to_string(diff: &git2::Diff) -> Result<String, String> {
         output.push_str(&String::from_utf8_lossy(line.content()));
         line_count += 1;
         true
-    }).map_err(|e| e.to_string())?;
+    });
+    // When truncated, diff.print returns an error because the callback returned false.
+    // Only propagate unexpected errors (i.e., not caused by our intentional truncation).
+    if !truncated {
+        print_result.map_err(|e| e.to_string())?;
+    }
     if truncated {
         output.push_str("\n\n... diff truncated (50000+ lines) ...\n");
     }
@@ -196,6 +201,40 @@ mod tests {
         let diff = git_diff_file(&repo_path, "tracked.txt", true).unwrap();
         assert!(diff.contains("-original"));
         assert!(diff.contains("+staged content"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // diff_to_string truncation test
+    // ---------------------------------------------------------------
+    #[test]
+    fn diff_to_string_caps_at_max_lines() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("diff-truncate", &tmp);
+
+        let repo = Repository::open(&repo_path).unwrap();
+
+        // Create a file with more than MAX_DIFF_LINES lines
+        let line_count = MAX_DIFF_LINES + 1000;
+        let content: String = (0..line_count)
+            .map(|i| format!("line {}\n", i))
+            .collect();
+        fs::write(repo_path.join("big.txt"), &content).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("big.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add big file", &tree, &[&parent]).unwrap();
+
+        let commits = git_log(&repo_path, 1);
+        let diff = git_diff_commit(&repo_path, &commits[0].hash).unwrap();
+        assert!(
+            diff.contains("diff truncated"),
+            "Diff should contain truncation message when exceeding MAX_DIFF_LINES"
+        );
         let _ = fs::remove_dir_all(&tmp);
     }
 }

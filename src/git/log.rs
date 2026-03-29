@@ -248,4 +248,67 @@ mod tests {
         assert_eq!(files[0].status, 'M');
         let _ = fs::remove_dir_all(&tmp);
     }
+
+    // ---------------------------------------------------------------
+    // git_blame tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_blame_returns_lines() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("blame-test", &tmp);
+
+        // Create and commit a file with multiple lines
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("code.rs"), "line1\nline2\nline3\n").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("code.rs")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add code.rs", &tree, &[&parent]).unwrap();
+
+        let lines = git_blame(&repo_path, "code.rs").unwrap();
+        assert_eq!(lines.len(), 3, "Should have 3 blame lines");
+        assert_eq!(lines[0].content, "line1");
+        assert_eq!(lines[1].content, "line2");
+        assert_eq!(lines[2].content, "line3");
+        assert!(!lines[0].hash.is_empty(), "Hash should not be empty");
+        assert!(!lines[0].author.is_empty(), "Author should not be empty");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn git_blame_on_invalid_file_returns_error() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("blame-err", &tmp);
+
+        let result = git_blame(&repo_path, "nonexistent.txt");
+        assert!(result.is_err(), "Blaming a non-existent file should return an error");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // format_elapsed tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn format_elapsed_seconds() {
+        assert_eq!(format_elapsed(30), "30 seconds ago");
+    }
+
+    #[test]
+    fn format_elapsed_minutes() {
+        assert_eq!(format_elapsed(120), "2 minutes ago");
+    }
+
+    #[test]
+    fn format_elapsed_hours() {
+        assert_eq!(format_elapsed(7200), "2 hours ago");
+    }
+
+    #[test]
+    fn format_elapsed_days() {
+        assert_eq!(format_elapsed(172800), "2 days ago");
+    }
 }

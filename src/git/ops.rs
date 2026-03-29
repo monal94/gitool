@@ -247,4 +247,248 @@ mod tests {
         assert_eq!(content, "original");
         let _ = fs::remove_dir_all(&tmp);
     }
+
+    // ---------------------------------------------------------------
+    // git_commit tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_commit_creates_commit() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("commit-test", &tmp);
+
+        // Record original HEAD
+        let repo = Repository::open(&repo_path).unwrap();
+        let original_head = repo.head().unwrap().target().unwrap();
+
+        // Create and stage a file
+        fs::write(repo_path.join("new.txt"), "content").unwrap();
+        git_stage(&repo_path, "new.txt").unwrap();
+
+        // Commit
+        let result = git_commit(&repo_path, "Add new.txt");
+        assert!(result.is_ok(), "git_commit should succeed");
+
+        // Verify HEAD changed
+        let repo = Repository::open(&repo_path).unwrap();
+        let new_head = repo.head().unwrap().target().unwrap();
+        assert_ne!(original_head, new_head, "HEAD should point to a new commit");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // git_create_branch tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_create_branch_creates_and_switches() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("create-branch", &tmp);
+
+        let result = git_create_branch(&repo_path, "feature-x");
+        assert!(result.is_ok(), "git_create_branch should succeed");
+
+        // Verify HEAD points to the new branch
+        let repo = Repository::open(&repo_path).unwrap();
+        let head = repo.head().unwrap();
+        let branch_name = head.shorthand().unwrap();
+        assert_eq!(branch_name, "feature-x", "HEAD should point to the new branch");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // git_delete_branch tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_delete_branch_removes_branch() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("delete-branch", &tmp);
+
+        // Create a branch, then switch away from it
+        git_create_branch(&repo_path, "to-delete").unwrap();
+        git_checkout(&repo_path, "master").unwrap();
+
+        // Delete it
+        let result = git_delete_branch(&repo_path, "to-delete");
+        assert!(result.is_ok(), "git_delete_branch should succeed");
+
+        // Verify it's gone
+        let repo = Repository::open(&repo_path).unwrap();
+        let found = repo.find_branch("to-delete", git2::BranchType::Local);
+        assert!(found.is_err(), "Deleted branch should not be found");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // git_rename_branch tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_rename_branch_renames() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("rename-branch", &tmp);
+
+        // Create a branch
+        git_create_branch(&repo_path, "old-name").unwrap();
+        git_checkout(&repo_path, "master").unwrap();
+
+        // Rename it
+        let result = git_rename_branch(&repo_path, "old-name", "new-name");
+        assert!(result.is_ok(), "git_rename_branch should succeed");
+
+        // Verify new name exists and old name is gone
+        let repo = Repository::open(&repo_path).unwrap();
+        assert!(
+            repo.find_branch("new-name", git2::BranchType::Local).is_ok(),
+            "New branch name should exist"
+        );
+        assert!(
+            repo.find_branch("old-name", git2::BranchType::Local).is_err(),
+            "Old branch name should be gone"
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // git_checkout tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_checkout_switches_branch() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("checkout-test", &tmp);
+
+        // Create a branch (this also switches to it)
+        git_create_branch(&repo_path, "other").unwrap();
+        // Switch back to master
+        git_checkout(&repo_path, "master").unwrap();
+
+        let repo = Repository::open(&repo_path).unwrap();
+        let head = repo.head().unwrap();
+        assert_eq!(head.shorthand().unwrap(), "master");
+
+        // Switch to other
+        git_checkout(&repo_path, "other").unwrap();
+        let repo = Repository::open(&repo_path).unwrap();
+        let head = repo.head().unwrap();
+        assert_eq!(head.shorthand().unwrap(), "other", "Should be on 'other' branch");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // git_stash and git_stash_pop roundtrip tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_stash_and_pop_roundtrip() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("stash-roundtrip", &tmp);
+
+        // Create and commit a tracked file
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("file.txt"), "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add file", &tree, &[&parent]).unwrap();
+
+        // Dirty the file
+        fs::write(repo_path.join("file.txt"), "dirty").unwrap();
+
+        // Stash
+        let result = git_stash(&repo_path);
+        assert!(result.is_ok(), "git_stash should succeed");
+
+        // Verify working tree is clean (file restored to committed state)
+        let content = fs::read_to_string(repo_path.join("file.txt")).unwrap();
+        assert_eq!(content, "original", "After stash, file should be clean");
+
+        // Pop
+        let result = git_stash_pop(&repo_path);
+        assert!(result.is_ok(), "git_stash_pop should succeed");
+
+        // Verify dirty state is back
+        let content = fs::read_to_string(repo_path.join("file.txt")).unwrap();
+        assert_eq!(content, "dirty", "After pop, file should have dirty content");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // git_stash_with_message tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_stash_with_message_uses_message() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("stash-msg", &tmp);
+
+        // Create and commit a tracked file
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("file.txt"), "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add file", &tree, &[&parent]).unwrap();
+
+        // Dirty the file and stash with a message
+        fs::write(repo_path.join("file.txt"), "changed").unwrap();
+        let result = git_stash_with_message(&repo_path, "my custom stash message");
+        assert!(result.is_ok(), "git_stash_with_message should succeed");
+
+        // Check reflog for the message
+        let repo = Repository::open(&repo_path).unwrap();
+        let reflog = repo.reflog("refs/stash").unwrap();
+        assert!(reflog.len() > 0, "Stash reflog should have entries");
+        let entry_msg = reflog.get(0).unwrap().message().unwrap_or("").to_string();
+        assert!(
+            entry_msg.contains("my custom stash message"),
+            "Stash reflog should contain the custom message, got: {}",
+            entry_msg
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // git_stash_drop tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_stash_drop_removes_entry() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("stash-drop", &tmp);
+
+        // Create and commit a tracked file
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("file.txt"), "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add file", &tree, &[&parent]).unwrap();
+
+        // Stash twice
+        fs::write(repo_path.join("file.txt"), "change-1").unwrap();
+        git_stash(&repo_path).unwrap();
+        fs::write(repo_path.join("file.txt"), "change-2").unwrap();
+        git_stash(&repo_path).unwrap();
+
+        // Verify we have 2 stashes
+        let repo = Repository::open(&repo_path).unwrap();
+        let before_count = repo.reflog("refs/stash").unwrap().len();
+        assert_eq!(before_count, 2, "Should have 2 stash entries");
+
+        // Drop the first (index 0)
+        let result = git_stash_drop(&repo_path, 0);
+        assert!(result.is_ok(), "git_stash_drop should succeed");
+
+        // Verify count decreased
+        let repo = Repository::open(&repo_path).unwrap();
+        let after_count = repo.reflog("refs/stash").unwrap().len();
+        assert_eq!(after_count, 1, "Should have 1 stash entry after drop");
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }

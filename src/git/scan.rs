@@ -540,4 +540,62 @@ mod tests {
         assert_eq!(status.stash, 0);
         let _ = fs::remove_dir_all(&tmp);
     }
+
+    // ---------------------------------------------------------------
+    // detect_default_branch tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn detect_default_branch_falls_back_to_main() {
+        let tmp = tmp_dir();
+        let repo_path = tmp.join("main-branch-repo");
+        fs::create_dir_all(&repo_path).unwrap();
+
+        // Init the repo -- default branch will be whatever git default is
+        let repo = Repository::init(&repo_path).unwrap();
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Test User").unwrap();
+        config.set_str("user.email", "test@example.com").unwrap();
+
+        // Create initial commit on a branch called "main"
+        let sig = repo.signature().unwrap();
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial", &tree, &[]).unwrap();
+
+        // Rename the current branch to "main" to ensure it exists
+        let head = repo.head().unwrap();
+        let current_name = head.shorthand().unwrap_or("").to_string();
+        if current_name != "main" {
+            let mut branch = repo.find_branch(&current_name, git2::BranchType::Local).unwrap();
+            branch.rename("main", true).unwrap();
+        }
+
+        let detected = detect_default_branch(&repo);
+        assert_eq!(detected, "main", "Should detect 'main' as default branch");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // scan_repo includes default_branch
+    // ---------------------------------------------------------------
+    #[test]
+    fn scan_repo_includes_default_branch() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("default-branch-scan", &tmp);
+
+        let status = scan_repo(&repo_path).expect("scan_repo should return Some");
+        assert!(
+            !status.default_branch.is_empty(),
+            "default_branch should be populated"
+        );
+        // It should be one of the standard fallback names since there's no remote
+        let valid = ["main", "master", "develop"];
+        assert!(
+            valid.contains(&status.default_branch.as_str()),
+            "default_branch '{}' should be one of {:?}",
+            status.default_branch,
+            valid
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }

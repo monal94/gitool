@@ -974,4 +974,312 @@ mod tests {
             panic!("Expected ConfirmAction::DiscardFile");
         }
     }
+
+    // --- SidePanel from_num exhaustive tests ---
+
+    #[test]
+    fn side_panel_from_num_1() {
+        assert_eq!(SidePanel::from_num('1'), Some(SidePanel::Repos));
+    }
+
+    #[test]
+    fn side_panel_from_num_2() {
+        assert_eq!(SidePanel::from_num('2'), Some(SidePanel::Files));
+    }
+
+    #[test]
+    fn side_panel_from_num_3() {
+        assert_eq!(SidePanel::from_num('3'), Some(SidePanel::Branches));
+    }
+
+    #[test]
+    fn side_panel_from_num_4() {
+        assert_eq!(SidePanel::from_num('4'), Some(SidePanel::Commits));
+    }
+
+    #[test]
+    fn side_panel_from_num_5() {
+        assert_eq!(SidePanel::from_num('5'), Some(SidePanel::Stash));
+    }
+
+    #[test]
+    fn side_panel_from_num_invalid() {
+        assert_eq!(SidePanel::from_num('0'), None);
+        assert_eq!(SidePanel::from_num('6'), None);
+        assert_eq!(SidePanel::from_num('a'), None);
+    }
+
+    #[test]
+    fn side_panel_next_full_cycle() {
+        let start = SidePanel::Repos;
+        let after1 = start.next();
+        assert_eq!(after1, SidePanel::Files);
+        let after2 = after1.next();
+        assert_eq!(after2, SidePanel::Branches);
+        let after3 = after2.next();
+        assert_eq!(after3, SidePanel::Commits);
+        let after4 = after3.next();
+        assert_eq!(after4, SidePanel::Stash);
+        let after5 = after4.next();
+        assert_eq!(after5, SidePanel::Repos);
+        // Full cycle verified: Repos -> Files -> Branches -> Commits -> Stash -> Repos
+    }
+
+    #[test]
+    fn side_panel_prev_full_cycle() {
+        let start = SidePanel::Repos;
+        let after1 = start.prev();
+        assert_eq!(after1, SidePanel::Stash);
+        let after2 = after1.prev();
+        assert_eq!(after2, SidePanel::Commits);
+        let after3 = after2.prev();
+        assert_eq!(after3, SidePanel::Branches);
+        let after4 = after3.prev();
+        assert_eq!(after4, SidePanel::Files);
+        let after5 = after4.prev();
+        assert_eq!(after5, SidePanel::Repos);
+        // Full reverse cycle verified: Repos -> Stash -> Commits -> Branches -> Files -> Repos
+    }
+
+    // --- Mode BlameView tests ---
+
+    #[test]
+    fn mode_blame_view_is_distinct() {
+        assert_ne!(Mode::BlameView, Mode::Normal);
+        assert_ne!(Mode::BlameView, Mode::DiffView);
+        assert_ne!(Mode::BlameView, Mode::Filter);
+        assert_ne!(Mode::BlameView, Mode::CommandLog);
+        assert_ne!(Mode::BlameView, Mode::WorkspaceSwitcher);
+        assert_eq!(Mode::BlameView, Mode::BlameView);
+    }
+
+    #[test]
+    fn mode_all_simple_variants_distinct_with_blame() {
+        let variants = [
+            Mode::Normal,
+            Mode::WorkspaceSwitcher,
+            Mode::DiffView,
+            Mode::CommandLog,
+            Mode::Filter,
+            Mode::BlameView,
+        ];
+        for (i, a) in variants.iter().enumerate() {
+            for (j, b) in variants.iter().enumerate() {
+                if i == j {
+                    assert_eq!(a, b);
+                } else {
+                    assert_ne!(a, b, "Mode variants at index {} and {} should differ", i, j);
+                }
+            }
+        }
+    }
+
+    // --- ConfirmAction: CherryPick, RevertCommit, StashDrop ---
+
+    #[test]
+    fn confirm_action_cherry_pick() {
+        let action = ConfirmAction::CherryPick(
+            PathBuf::from("/repos/frontend"),
+            "abc1234".to_string(),
+        );
+        if let ConfirmAction::CherryPick(repo, hash) = &action {
+            assert_eq!(repo, &PathBuf::from("/repos/frontend"));
+            assert_eq!(hash, "abc1234");
+        } else {
+            panic!("Expected ConfirmAction::CherryPick");
+        }
+    }
+
+    #[test]
+    fn confirm_action_revert_commit() {
+        let action = ConfirmAction::RevertCommit(
+            PathBuf::from("/repos/backend"),
+            "deadbeef".to_string(),
+        );
+        if let ConfirmAction::RevertCommit(repo, hash) = &action {
+            assert_eq!(repo, &PathBuf::from("/repos/backend"));
+            assert_eq!(hash, "deadbeef");
+        } else {
+            panic!("Expected ConfirmAction::RevertCommit");
+        }
+    }
+
+    #[test]
+    fn confirm_action_stash_drop() {
+        let action = ConfirmAction::StashDrop(PathBuf::from("/repos/lib"), 3);
+        if let ConfirmAction::StashDrop(repo, index) = &action {
+            assert_eq!(repo, &PathBuf::from("/repos/lib"));
+            assert_eq!(*index, 3);
+        } else {
+            panic!("Expected ConfirmAction::StashDrop");
+        }
+    }
+
+    // --- TextInputAction: AmendCommit, StashMessage, CreateTag ---
+
+    #[test]
+    fn text_input_action_amend_commit() {
+        let action = TextInputAction::AmendCommit;
+        assert_eq!(action, TextInputAction::AmendCommit);
+        assert_ne!(action, TextInputAction::CommitMessage);
+        assert_ne!(action, TextInputAction::CreateBranch);
+    }
+
+    #[test]
+    fn text_input_action_stash_message() {
+        let action = TextInputAction::StashMessage;
+        assert_eq!(action, TextInputAction::StashMessage);
+        assert_ne!(action, TextInputAction::CommitMessage);
+        assert_ne!(action, TextInputAction::AmendCommit);
+    }
+
+    #[test]
+    fn text_input_action_create_tag() {
+        let action = TextInputAction::CreateTag("abc1234def".to_string());
+        if let TextInputAction::CreateTag(hash) = &action {
+            assert_eq!(hash, "abc1234def");
+        } else {
+            panic!("Expected TextInputAction::CreateTag");
+        }
+        // Verify equality with same hash
+        let same = TextInputAction::CreateTag("abc1234def".to_string());
+        assert_eq!(action, same);
+        // Verify inequality with different hash
+        let different = TextInputAction::CreateTag("other_hash".to_string());
+        assert_ne!(action, different);
+    }
+
+    // --- StashEntry tests ---
+
+    #[test]
+    fn stash_entry_construction() {
+        let entry = StashEntry {
+            index: 0,
+            message: "WIP: feature branch work".to_string(),
+        };
+        assert_eq!(entry.index, 0);
+        assert_eq!(entry.message, "WIP: feature branch work");
+    }
+
+    #[test]
+    fn stash_entry_clone() {
+        let entry = StashEntry {
+            index: 2,
+            message: "stash@{2}: On main: experimental changes".to_string(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.index, 2);
+        assert_eq!(cloned.message, "stash@{2}: On main: experimental changes");
+        // Verify original is unaffected
+        assert_eq!(entry.index, 2);
+        assert_eq!(entry.message, "stash@{2}: On main: experimental changes");
+    }
+
+    // --- BlameLine tests ---
+
+    #[test]
+    fn blame_line_construction() {
+        let line = BlameLine {
+            hash: "a1b2c3d".to_string(),
+            author: "Alice".to_string(),
+            line_no: 42,
+            content: "    let x = compute();".to_string(),
+        };
+        assert_eq!(line.hash, "a1b2c3d");
+        assert_eq!(line.author, "Alice");
+        assert_eq!(line.line_no, 42);
+        assert_eq!(line.content, "    let x = compute();");
+    }
+
+    #[test]
+    fn blame_line_clone() {
+        let line = BlameLine {
+            hash: "ff00ff".to_string(),
+            author: "Bob".to_string(),
+            line_no: 1,
+            content: "use std::io;".to_string(),
+        };
+        let cloned = line.clone();
+        assert_eq!(cloned.hash, "ff00ff");
+        assert_eq!(cloned.author, "Bob");
+        assert_eq!(cloned.line_no, 1);
+        assert_eq!(cloned.content, "use std::io;");
+    }
+
+    // --- CommandLogEntry with empty output ---
+
+    #[test]
+    fn command_log_entry_with_empty_output() {
+        let entry = CommandLogEntry {
+            timestamp: Instant::now(),
+            repo_name: "my-repo".to_string(),
+            command: "git status".to_string(),
+            success: true,
+            output: String::new(),
+        };
+        assert_eq!(entry.repo_name, "my-repo");
+        assert_eq!(entry.command, "git status");
+        assert!(entry.success);
+        assert!(entry.output.is_empty());
+        assert_eq!(entry.output, "");
+    }
+
+    // --- App field defaults (via temp dir with git repo) ---
+
+    #[test]
+    fn app_new_defaults() {
+        // Create a temp directory and initialize a bare git repo inside a sub-dir
+        let tmp = std::env::temp_dir().join("gitool_test_app_defaults");
+        let repo_dir = tmp.join("test-repo");
+        // Clean up from any prior run
+        let _ = std::fs::remove_dir_all(&tmp);
+        std::fs::create_dir_all(&repo_dir).expect("create repo dir");
+        // Initialize a git repo so scan_workspace finds it
+        git2::Repository::init(&repo_dir).expect("git init");
+
+        let app = App::new(tmp.clone());
+
+        // Verify active_side defaults
+        assert_eq!(app.active_side, SidePanel::Repos);
+        // Verify mode defaults
+        assert_eq!(app.mode, Mode::Normal);
+        // Verify dirty is true (initial state)
+        assert!(app.dirty);
+        // Verify commit_log is empty
+        assert!(app.commit_log.is_empty());
+        // Verify stash_list is empty
+        assert!(app.stash_list.is_empty());
+        // Verify preview_content is empty
+        assert!(app.preview_content.is_empty());
+        // Verify selection indices default to 0
+        assert_eq!(app.selected_repo, 0);
+        assert_eq!(app.selected_branch, 0);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&tmp);
+    }
+
+    // --- Notification tests ---
+
+    #[test]
+    fn notification_error() {
+        let notification = Notification {
+            message: "Push failed: rejected".to_string(),
+            is_error: true,
+            created: Instant::now(),
+        };
+        assert_eq!(notification.message, "Push failed: rejected");
+        assert!(notification.is_error);
+    }
+
+    #[test]
+    fn notification_success() {
+        let notification = Notification {
+            message: "Pull complete".to_string(),
+            is_error: false,
+            created: Instant::now(),
+        };
+        assert_eq!(notification.message, "Pull complete");
+        assert!(!notification.is_error);
+    }
 }
