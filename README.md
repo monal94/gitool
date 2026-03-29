@@ -5,34 +5,45 @@ A lazygit-inspired TUI for managing multiple git repositories.
 Built with Rust, [ratatui](https://github.com/ratatui/ratatui), and [libgit2](https://libgit2.org/).
 
 ```
-┌─ WORKSPACE: sentry ─ ~/Projects/sentry ──────────────────────────┐
-│                                                                    │
-│  Repos              │  backend (main) ↑0 ↓0 Δ0 Stash:0           │
-│  ─────              │  ───────────────────────────────────         │
-│  > ai          ●    │  Branches                                    │
-│    backend     ●    │  ● main origin/main                          │
-│    bundle      Δ1   │    feat/auth origin/feat/auth [↑2]          │
-│    core        ●    │    fix/bug [local]                           │
-│    frontend    ●    │    feat/gis origin/feat/gis [remote only]   │
-│    platform    ●    │                                              │
-│                     │                                              │
-├─────────────────────┴──────────────────────────────────────────────┤
-│ j/k:nav  Tab:panel  Enter:checkout  p:pull  P:push  f:fetch       │
-│ s:stash  d:diff  l:log  c:commit  z:zoom  `:cmdlog  q:quit        │
-└────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────┐
+│ [1 Repos]  2 Files  3 Branches  4 Commits  5 Stash  workspace │
+├───────────────────────┬────────────────────────────────────────┤
+│ ┌ 1 Repos ──────────┐ │                                        │
+│ │ ▸ repo-alpha  ● Δ2 │ │  Preview                               │
+│ │   repo-beta   ●    │ │  (context-sensitive)                   │
+│ │   repo-gamma  ↑1   │ │                                        │
+│ └────────────────────┘ │  Repos → repo summary                  │
+│ ┌ 2 Files ──────────┐ │  Files → syntax-highlighted diff       │
+│ │ ● M src/main.rs    │ │  Branches → recent commits             │
+│ │ ○ A README.md      │ │  Commits → commit diff                │
+│ └────────────────────┘ │  Stash → stash diff                   │
+│ ┌ 3 Branches ───────┐ │                                        │
+│ │ ● main origin/main │ │                                        │
+│ │   feat/login [↑2]  │ │                                        │
+│ └────────────────────┘ │                                        │
+│ ┌ 4 Commits ────────┐ │                                        │
+│ │ abc1234 Fix bug 2m │ │                                        │
+│ └────────────────────┘ │                                        │
+│ ┌ 5 Stash ──────────┐ │                                        │
+│ │ stash@{0}: WIP     │ │                                        │
+│ └────────────────────┘ │                                        │
+├───────────────────────┴────────────────────────────────────────┤
+│ j/k nav  Tab panel  1-5 jump  a stage  c commit  q quit       │
+└────────────────────────────────────────────────────────────────┘
 ```
 
 ## Features
 
 | Category | Features |
 |----------|----------|
-| **Workspace** | Multi-repo view with status glyphs, workspace switching (`w`), repo hiding (`h`/`H`), search/filter (`/`) |
-| **Branches** | Unified local+remote display, drift tracking vs `main` and remote, checkout (`Enter`), create (`n`), delete (`D`), rename (`R`), merge (`m`) |
-| **Files** | Stage (`a`), unstage (`u`), discard (`x`) individual files with per-file status |
-| **Git ops** | Pull (`p`), push (`P`), fetch (`f`), stash (`s`), diff (`d`), commit (`c`) — all non-blocking |
-| **Bulk** | Multi-select repos (`Space`/`Ctrl+a`/`Ctrl+d`), bulk pull/push/fetch |
-| **History** | Commit log (`l`), command log (`` ` ``), undo (`Ctrl+z`) |
-| **UI** | Mouse support, zoom mode (`z`), file watching auto-refresh, <50ms startup |
+| **Workspace** | Multi-repo view, workspace switching (`w`), repo hiding, search/filter (`/`), bulk mark (`Space`/`Ctrl+a`) |
+| **Files** | Stage (`a`), unstage (`u`), discard (`x`), per-file diff (`d`/`Enter`), open in editor (`e`), blame (`b`) |
+| **Branches** | Checkout (`Enter`), create (`n`), delete (`D`), rename (`R`), merge (`m`), auto-detect default branch |
+| **Commits** | Browse history, cherry-pick (`C`), revert (`X`), create tag (`t`), copy hash (`y`), commit diff preview |
+| **Stash** | Stash with message (`s`), pop (`Enter`), drop (`x`), browse stash diffs |
+| **Git ops** | Pull (`p`), push (`P`), fetch (`f`), commit (`c`), amend (`A`) — all non-blocking via rayon |
+| **UI** | 5 stacked panels + context preview, mouse support, syntax-highlighted diffs, <50ms startup |
+| **Undo** | `Ctrl+z` reverses checkout and stash operations |
 
 ## Install
 
@@ -46,27 +57,58 @@ cargo install --path .
 
 ```bash
 gitool ~/Projects/my-workspace   # open a workspace
-gitool                           # current directory
+gitool                           # current directory (single repo or workspace)
 ```
 
 ## Key Bindings
 
+### Global (any panel)
+
 | Key | Action | Key | Action |
 |-----|--------|-----|--------|
-| `j`/`k` | Navigate | `Tab` | Switch panel |
-| `Enter` | Checkout branch | `p`/`P` | Pull / Push |
-| `f` | Fetch | `s` | Stash / Pop |
-| `d` | Diff | `l` | Commit log |
-| `c` | Create commit | `n` | New branch |
-| `D` | Delete branch | `R` | Rename branch |
-| `m` | Merge branch | `a`/`u`/`x` | Stage / Unstage / Discard |
-| `Space` | Mark repo | `Ctrl+a`/`Ctrl+d` | Mark / Unmark all |
-| `Ctrl+z` | Undo | `z` | Zoom panel |
+| `1`-`5` | Jump to panel | `Tab`/`BackTab` | Cycle panels |
+| `q`/`Esc` | Quit | `r` | Refresh |
 | `/` | Filter | `` ` `` | Command log |
-| `w` | Switch workspace | `h`/`H` | Hide / Show hidden |
-| `r` | Refresh | `q`/`Esc` | Quit |
+| `w` | Switch workspace | `Ctrl+z` | Undo |
 
-**Overlays** (`d`/`l`/`` ` ``): `j`/`k` scroll, `d`/`u` page, `Esc` close.
+### Repos (1)
+
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `j`/`k` | Navigate | `Enter` | Jump to Files |
+| `p`/`P` | Pull / Push | `f` | Fetch |
+| `Space` | Mark repo | `Ctrl+a`/`Ctrl+d` | Mark / Unmark all |
+
+### Files (2)
+
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `a` | Stage | `u` | Unstage |
+| `x` | Discard | `d`/`Enter` | View diff |
+| `c` | Commit | `A` | Amend commit |
+| `e` | Open in editor | `b` | Blame view |
+
+### Branches (3)
+
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `Enter` | Checkout | `n` | New branch |
+| `D` | Delete | `R` | Rename |
+| `m` | Merge | `s` | Stash |
+
+### Commits (4)
+
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `d`/`u` | Scroll preview | `y` | Copy hash |
+| `C` | Cherry-pick | `X` | Revert |
+| `t` | Create tag | | |
+
+### Stash (5)
+
+| Key | Action | Key | Action |
+|-----|--------|-----|--------|
+| `s`/`Enter` | Pop stash | `x` | Drop stash |
 
 ## Configuration
 
@@ -85,28 +127,53 @@ defaults:
 
 ```
 src/
-├── main.rs            # Event loop, key/mouse handlers
-├── app.rs             # State, navigation, async dispatch, undo
-├── git.rs             # Git operations (libgit2 reads, git CLI writes)
-├── config.rs          # YAML config
-├── types.rs           # RepoStatus, BranchEntry, FileEntry
+├── main.rs              # Event loop, key/mouse handlers
+├── app/
+│   ├── mod.rs           # App struct, enums, core state
+│   ├── navigation.rs    # Panel switching, selection
+│   ├── dispatch.rs      # Async background operations
+│   ├── git_ops.rs       # Git action methods
+│   ├── branch_ops.rs    # Branch CRUD, text input
+│   ├── state.rs         # Refresh, workspace, load data
+│   ├── watcher.rs       # File system watching
+│   └── undo.rs          # Undo stack
+├── git/
+│   ├── mod.rs           # Re-exports, test helpers
+│   ├── scan.rs          # Repo scanning, branch loading
+│   ├── status.rs        # File status via libgit2
+│   ├── diff.rs          # Diff generation via libgit2
+│   ├── ops.rs           # Git mutations (libgit2 + CLI)
+│   └── log.rs           # Commit log, blame, show files
+├── config.rs            # YAML workspace config
+├── types.rs             # Data models
+├── highlight.rs         # Syntect diff highlighting
 └── ui/
-    ├── mod.rs         # Layout, header, footer, zoom
-    ├── repo_list.rs   # Repo list with status glyphs
-    ├── detail.rs      # Branch list with drift
-    ├── files.rs       # File staging panel
-    ├── diff.rs        # Diff overlay
-    ├── commit_log.rs  # Commit history
-    ├── command_log.rs # Command history
-    ├── modal.rs       # Workspace switcher
-    └── confirm.rs     # Confirmation dialog
+    ├── mod.rs           # Layout orchestrator
+    ├── repo_list.rs     # Repos panel
+    ├── files.rs         # Files panel
+    ├── branches.rs      # Branches panel
+    ├── commits.rs       # Commits panel
+    ├── stash_panel.rs   # Stash panel
+    ├── preview.rs       # Context preview (right)
+    ├── diff.rs          # Full-screen diff overlay
+    ├── blame.rs         # Blame overlay
+    ├── command_log.rs   # Command history overlay
+    ├── confirm.rs       # Confirmation dialog
+    └── modal.rs         # Workspace switcher
+
 ```
 
-All git mutations run in background threads via `mpsc` channels. Repos scan in parallel at startup. Branch drift computes lazily on selection. File watching via `notify` auto-refreshes on `.git` changes.
+Git reads use libgit2 directly (no subprocess). Mutations use rayon thread pool for non-blocking execution. Diffs are syntax-highlighted with windowed rendering (only visible lines processed). File watching auto-refreshes on `.git` changes with generation-counter caching.
+
+## Testing
+
+```bash
+cargo test    # 166 tests
+```
 
 ## Tech Stack
 
-[ratatui](https://github.com/ratatui/ratatui) | [crossterm](https://github.com/crossterm-rs/crossterm) | [git2](https://github.com/rust-lang/git2-rs) | [notify](https://github.com/notify-rs/notify) | [clap](https://github.com/clap-rs/clap) | [serde_yaml](https://github.com/dtolnay/serde-yaml)
+[ratatui](https://github.com/ratatui/ratatui) | [git2](https://github.com/rust-lang/git2-rs) | [syntect](https://github.com/trishume/syntect) | [rayon](https://github.com/rayon-rs/rayon) | [arboard](https://github.com/1Password/arboard) | [notify](https://github.com/notify-rs/notify) | [crossterm](https://github.com/crossterm-rs/crossterm) | [clap](https://github.com/clap-rs/clap)
 
 ## License
 
