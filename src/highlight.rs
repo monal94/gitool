@@ -20,6 +20,10 @@ impl Highlighter {
     }
 }
 
+// Dark background tints for added/removed lines (like lazygit/delta)
+const ADD_BG: Color = Color::Rgb(0, 60, 0);   // dark green background
+const DEL_BG: Color = Color::Rgb(80, 0, 0);   // dark red background
+
 fn colorize_diff_line(line: &str) -> Line<'static> {
     if line.starts_with("diff --git") || line.starts_with("index ") {
         return Line::from(Span::styled(
@@ -36,25 +40,25 @@ fn colorize_diff_line(line: &str) -> Line<'static> {
     if line.starts_with("@@") {
         return Line::from(Span::styled(
             line.to_string(),
-            Style::default().fg(Color::Cyan),
+            Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD),
         ));
     }
-    if let Some(rest) = line.strip_prefix('+') {
-        return Line::from(vec![
-            Span::styled("+", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
-            Span::styled(rest.to_string(), Style::default().fg(Color::Green)),
-        ]);
+    if line.starts_with('+') {
+        return Line::from(Span::styled(
+            line.to_string(),
+            Style::default().fg(Color::Green).bg(ADD_BG),
+        ));
     }
-    if let Some(rest) = line.strip_prefix('-') {
-        return Line::from(vec![
-            Span::styled("-", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
-            Span::styled(rest.to_string(), Style::default().fg(Color::Red)),
-        ]);
+    if line.starts_with('-') {
+        return Line::from(Span::styled(
+            line.to_string(),
+            Style::default().fg(Color::Red).bg(DEL_BG),
+        ));
     }
     // Context line
     Line::from(Span::styled(
         line.to_string(),
-        Style::default().fg(Color::White),
+        Style::default().fg(Color::Gray),
     ))
 }
 
@@ -92,13 +96,13 @@ mod tests {
     #[test]
     fn colorize_added_line() {
         let line = colorize_diff_line("+fn main() {}");
-        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans.len(), 1); // full-line green bg
     }
 
     #[test]
     fn colorize_removed_line() {
         let line = colorize_diff_line("-old code");
-        assert_eq!(line.spans.len(), 2);
+        assert_eq!(line.spans.len(), 1); // full-line red bg
     }
 
     #[test]
