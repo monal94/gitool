@@ -104,6 +104,11 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
         KeyCode::Char('1') => app.switch_tab(Tab::Status),
         KeyCode::Char('2') => app.switch_tab(Tab::Log),
+        // Log tab has its own navigation
+        _ if app.active_tab == Tab::Log => {
+            handle_log_tab(app, key, modifiers);
+            return;
+        }
         KeyCode::Char('j') | KeyCode::Down => app.move_down(),
         KeyCode::Char('k') | KeyCode::Up => app.move_up(),
         KeyCode::Char(' ') if app.active_panel == Panel::RepoList => app.toggle_mark_repo(),
@@ -151,6 +156,25 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('w') => {
             app.workspace_selector_index = 0;
             app.mode = Mode::WorkspaceSwitcher;
+        }
+        _ => {}
+    }
+}
+
+fn handle_log_tab(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) {
+    match key {
+        KeyCode::Char('j') | KeyCode::Down => app.log_move_down(),
+        KeyCode::Char('k') | KeyCode::Up => app.log_move_up(),
+        KeyCode::Tab => app.next_log_panel(),
+        KeyCode::Char('d') => app.log_page_down(),
+        KeyCode::Char('u') => app.log_page_up(),
+        KeyCode::Char('r') => {
+            app.load_log();
+            app.notify("Log refreshed".to_string(), false);
+        }
+        KeyCode::Char('`') => {
+            app.command_log_scroll = 0;
+            app.mode = Mode::CommandLog;
         }
         _ => {}
     }

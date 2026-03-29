@@ -422,6 +422,96 @@ impl App {
         self.commit_diff_preview.clear();
         self.commit_diff_scroll = 0;
         self.active_log_panel = LogPanel::Commits;
+        self.load_commit_detail();
+    }
+
+    /// Load files and diff for the currently selected commit.
+    pub fn load_commit_detail(&mut self) {
+        let Some(entry) = self.commit_log.get(self.commit_log_selected) else {
+            self.commit_files.clear();
+            self.commit_diff_preview.clear();
+            return;
+        };
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        let hash = entry.hash.clone();
+        let path = &repo.path;
+
+        self.commit_files = git::git_show_files(path, &hash).unwrap_or_default();
+        self.commit_files_selected = 0;
+        self.commit_diff_preview = git::git_diff_commit(path, &hash).unwrap_or_default();
+        self.commit_diff_scroll = 0;
+    }
+
+    /// Load per-file diff for the selected file in commit detail.
+    pub fn load_commit_file_diff(&mut self) {
+        let Some(file) = self.commit_files.get(self.commit_files_selected) else { return };
+        let Some(entry) = self.commit_log.get(self.commit_log_selected) else { return };
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+
+        self.commit_diff_preview = git::git_diff_commit_file(
+            &repo.path, &entry.hash, &file.path,
+        ).unwrap_or_default();
+        self.commit_diff_scroll = 0;
+    }
+
+    pub fn next_log_panel(&mut self) {
+        self.active_log_panel = match self.active_log_panel {
+            LogPanel::Commits => LogPanel::CommitFiles,
+            LogPanel::CommitFiles => LogPanel::DiffPreview,
+            LogPanel::DiffPreview => LogPanel::Commits,
+        };
+    }
+
+    pub fn log_move_up(&mut self) {
+        match self.active_log_panel {
+            LogPanel::Commits => {
+                if self.commit_log_selected > 0 {
+                    self.commit_log_selected -= 1;
+                    self.load_commit_detail();
+                }
+            }
+            LogPanel::CommitFiles => {
+                if self.commit_files_selected > 0 {
+                    self.commit_files_selected -= 1;
+                    self.load_commit_file_diff();
+                }
+            }
+            LogPanel::DiffPreview => {
+                self.commit_diff_scroll = self.commit_diff_scroll.saturating_sub(1);
+            }
+        }
+    }
+
+    pub fn log_move_down(&mut self) {
+        match self.active_log_panel {
+            LogPanel::Commits => {
+                if self.commit_log_selected + 1 < self.commit_log.len() {
+                    self.commit_log_selected += 1;
+                    self.load_commit_detail();
+                }
+            }
+            LogPanel::CommitFiles => {
+                if self.commit_files_selected + 1 < self.commit_files.len() {
+                    self.commit_files_selected += 1;
+                    self.load_commit_file_diff();
+                }
+            }
+            LogPanel::DiffPreview => {
+                self.commit_diff_scroll += 1;
+            }
+        }
+    }
+
+    pub fn log_page_down(&mut self) {
+        if self.active_log_panel == LogPanel::DiffPreview {
+            self.commit_diff_scroll += 20;
+        }
+    }
+
+    pub fn log_page_up(&mut self) {
+        if self.active_log_panel == LogPanel::DiffPreview {
+            self.commit_diff_scroll = self.commit_diff_scroll.saturating_sub(20);
+        }
     }
 
     pub fn toggle_zoom(&mut self) {
