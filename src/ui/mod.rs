@@ -7,7 +7,7 @@ mod diff;
 mod files;
 mod modal;
 
-use crate::app::{App, Mode};
+use crate::app::{App, Mode, Panel};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -43,7 +43,7 @@ pub fn render(f: &mut Frame, app: &App) {
 }
 
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
-    let header = Line::from(vec![
+    let mut spans = vec![
         Span::styled(" WORKSPACE: ", Style::default().fg(Color::Cyan).add_modifier(Modifier::BOLD)),
         Span::styled(&app.workspace_name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
         Span::raw("  "),
@@ -51,25 +51,49 @@ fn render_header(f: &mut Frame, app: &App, area: Rect) {
             app.workspace_path.to_string_lossy().to_string(),
             Style::default().fg(Color::DarkGray),
         ),
-    ]);
-    f.render_widget(Paragraph::new(header), area);
+    ];
+    if let Some(panel) = &app.zoomed_panel {
+        let name = match panel {
+            Panel::RepoList => "Repos",
+            Panel::Branches => "Branches",
+            Panel::Files => "Files",
+        };
+        spans.push(Span::styled(
+            format!("  [ZOOM: {}]", name),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ));
+    }
+    f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn render_main(f: &mut Frame, app: &App, area: Rect) {
-    let cols = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-        .split(area);
+    match app.zoomed_panel {
+        Some(Panel::RepoList) => {
+            repo_list::render(f, app, area);
+        }
+        Some(Panel::Branches) => {
+            detail::render(f, app, area);
+        }
+        Some(Panel::Files) => {
+            files::render(f, app, area);
+        }
+        None => {
+            let cols = Layout::default()
+                .direction(Direction::Horizontal)
+                .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+                .split(area);
 
-    repo_list::render(f, app, cols[0]);
+            repo_list::render(f, app, cols[0]);
 
-    let right = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-        .split(cols[1]);
+            let right = Layout::default()
+                .direction(Direction::Vertical)
+                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
+                .split(cols[1]);
 
-    detail::render(f, app, right[0]);
-    files::render(f, app, right[1]);
+            detail::render(f, app, right[0]);
+            files::render(f, app, right[1]);
+        }
+    }
 }
 
 fn render_footer(f: &mut Frame, _app: &App, area: Rect) {

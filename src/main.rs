@@ -133,6 +133,7 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             app.filter_active = true;
             app.mode = Mode::Filter;
         }
+        KeyCode::Char('z') => app.toggle_zoom(),
         KeyCode::Char('l') => app.show_commit_log(),
         KeyCode::Char('c') => app.create_commit_prompt(),
         KeyCode::Char('n') => app.create_branch_prompt(),

@@ -115,6 +115,7 @@ pub struct App {
     pub command_log: Vec<CommandLogEntry>,
     pub command_log_scroll: u16,
     pub dirty: bool,
+    pub zoomed_panel: Option<Panel>,
     result_rx: Receiver<GitResult>,
     task_tx: Sender<GitResult>,
 }
@@ -162,6 +163,7 @@ impl App {
             command_log: Vec::new(),
             command_log_scroll: 0,
             dirty: true,
+            zoomed_panel: None,
             result_rx,
             task_tx,
         };
@@ -316,6 +318,14 @@ impl App {
                 self.notification = None;
                 self.dirty = true;
             }
+        }
+    }
+
+    pub fn toggle_zoom(&mut self) {
+        if self.zoomed_panel.is_some() {
+            self.zoomed_panel = None;
+        } else {
+            self.zoomed_panel = Some(self.active_panel);
         }
     }
 
