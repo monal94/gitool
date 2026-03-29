@@ -106,6 +106,7 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char(' ') if app.active_panel == Panel::RepoList => app.toggle_mark_repo(),
         KeyCode::Char('a') if modifiers.contains(KeyModifiers::CONTROL) => app.mark_all_repos(),
         KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => app.unmark_all_repos(),
+        KeyCode::Char('z') if modifiers.contains(KeyModifiers::CONTROL) => app.undo(),
         KeyCode::Tab => app.next_panel(),
         KeyCode::Enter => app.checkout_selected(),
         KeyCode::Char('p') => {

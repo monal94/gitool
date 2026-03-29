@@ -58,6 +58,13 @@ pub struct Notification {
 }
 
 #[derive(Debug, Clone)]
+pub enum UndoOp {
+    Checkout { repo_path: PathBuf, previous_branch: String },
+    Stash { repo_path: PathBuf },
+    StashPop { repo_path: PathBuf },
+}
+
+#[derive(Debug, Clone)]
 pub struct CommitEntry {
     pub hash: String,
     pub author: String,
@@ -118,6 +125,7 @@ pub struct App {
     pub command_log_scroll: u16,
     pub dirty: bool,
     pub zoomed_panel: Option<Panel>,
+    pub undo_stack: Vec<UndoOp>,
     result_rx: Receiver<GitResult>,
     task_tx: Sender<GitResult>,
     _watcher: Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>,
@@ -167,6 +175,7 @@ impl App {
             command_log_scroll: 0,
             dirty: true,
             zoomed_panel: None,
+            undo_stack: Vec::new(),
             result_rx,
             task_tx,
             _watcher: None,
@@ -331,6 +340,31 @@ impl App {
             if n.created.elapsed().as_secs() >= 3 {
                 self.notification = None;
                 self.dirty = true;
+            }
+        }
+    }
+
+    pub fn undo(&mut self) {
+        let Some(op) = self.undo_stack.pop() else {
+            self.notify("Nothing to undo".to_string(), false);
+            return;
+        };
+        match op {
+            UndoOp::Checkout { repo_path, previous_branch } => {
+                let branch = previous_branch.clone();
+                self.dispatch(repo_path, &format!("Undo: checkout {}", previous_branch), move |p| {
+                    git::git_checkout(p, &branch)
+                });
+            }
+            UndoOp::Stash { repo_path } => {
+                self.dispatch(repo_path, "Undo: stash pop", |p| {
+                    git::git_stash_pop(p)
+                });
+            }
+            UndoOp::StashPop { repo_path } => {
+                self.dispatch(repo_path, "Undo: stash", |p| {
+                    git::git_stash(p)
+                });
             }
         }
     }
@@ -531,6 +565,7 @@ impl App {
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         let path = repo.path.clone();
         if repo.dirty > 0 {
+            self.undo_stack.push(UndoOp::Stash { repo_path: path.clone() });
             self.dispatch(path, "Stash", |p| git::git_stash(p));
         } else if repo.stash > 0 {
             self.mode = Mode::Confirm {
@@ -557,6 +592,12 @@ impl App {
             self.notify("Select a branch first (Tab to switch panel)".to_string(), false);
             return;
         };
+
+        let previous_branch = repo.branch.clone();
+        self.undo_stack.push(UndoOp::Checkout {
+            repo_path: path.clone(),
+            previous_branch,
+        });
 
         self.dispatch(path, &format!("Checkout {}", branch), move |p| {
             git::git_checkout(p, &branch)
@@ -781,6 +822,7 @@ impl App {
                     }
                 }
                 ConfirmAction::StashPop(path) => {
+                    self.undo_stack.push(UndoOp::StashPop { repo_path: path.clone() });
                     self.dispatch(path, "Stash pop", |p| git::git_stash_pop(p));
                 }
                 ConfirmAction::DeleteBranch(path, name) => {
