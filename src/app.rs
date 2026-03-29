@@ -858,3 +858,428 @@ impl App {
         self.pending_ops.contains(path)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    // --- Panel cycling tests ---
+
+    fn next_panel(p: Panel) -> Panel {
+        match p {
+            Panel::RepoList => Panel::Branches,
+            Panel::Branches => Panel::Files,
+            Panel::Files => Panel::RepoList,
+        }
+    }
+
+    #[test]
+    fn panel_next_repo_list_to_branches() {
+        assert_eq!(next_panel(Panel::RepoList), Panel::Branches);
+    }
+
+    #[test]
+    fn panel_next_branches_to_files() {
+        assert_eq!(next_panel(Panel::Branches), Panel::Files);
+    }
+
+    #[test]
+    fn panel_next_files_to_repo_list() {
+        assert_eq!(next_panel(Panel::Files), Panel::RepoList);
+    }
+
+    #[test]
+    fn panel_full_cycle() {
+        let start = Panel::RepoList;
+        let second = next_panel(start);
+        let third = next_panel(second);
+        let back = next_panel(third);
+        assert_eq!(back, Panel::RepoList);
+    }
+
+    #[test]
+    fn panel_equality() {
+        assert_eq!(Panel::RepoList, Panel::RepoList);
+        assert_eq!(Panel::Branches, Panel::Branches);
+        assert_eq!(Panel::Files, Panel::Files);
+    }
+
+    #[test]
+    fn panel_inequality() {
+        assert_ne!(Panel::RepoList, Panel::Branches);
+        assert_ne!(Panel::Branches, Panel::Files);
+        assert_ne!(Panel::Files, Panel::RepoList);
+    }
+
+    #[test]
+    fn panel_clone_and_copy() {
+        let p = Panel::Branches;
+        let cloned = p.clone();
+        let copied = p;
+        assert_eq!(cloned, Panel::Branches);
+        assert_eq!(copied, Panel::Branches);
+    }
+
+    // --- Mode enum tests ---
+
+    #[test]
+    fn mode_normal_is_distinct() {
+        assert_eq!(Mode::Normal, Mode::Normal);
+        assert_ne!(Mode::Normal, Mode::Filter);
+        assert_ne!(Mode::Normal, Mode::DiffView);
+        assert_ne!(Mode::Normal, Mode::CommandLog);
+        assert_ne!(Mode::Normal, Mode::CommitLog);
+        assert_ne!(Mode::Normal, Mode::WorkspaceSwitcher);
+    }
+
+    #[test]
+    fn mode_filter_is_distinct() {
+        assert_eq!(Mode::Filter, Mode::Filter);
+        assert_ne!(Mode::Filter, Mode::Normal);
+        assert_ne!(Mode::Filter, Mode::DiffView);
+    }
+
+    #[test]
+    fn mode_all_simple_variants_distinct() {
+        let variants = vec![
+            Mode::Normal,
+            Mode::WorkspaceSwitcher,
+            Mode::DiffView,
+            Mode::CommandLog,
+            Mode::CommitLog,
+            Mode::Filter,
+        ];
+        for (i, a) in variants.iter().enumerate() {
+            for (j, b) in variants.iter().enumerate() {
+                if i == j {
+                    assert_eq!(a, b);
+                } else {
+                    assert_ne!(a, b, "Mode variants at index {} and {} should differ", i, j);
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn mode_confirm_equality() {
+        let m1 = Mode::Confirm {
+            message: "Push?".to_string(),
+            action: ConfirmAction::Push(PathBuf::from("/repo")),
+        };
+        let m2 = Mode::Confirm {
+            message: "Push?".to_string(),
+            action: ConfirmAction::Push(PathBuf::from("/repo")),
+        };
+        assert_eq!(m1, m2);
+    }
+
+    #[test]
+    fn mode_confirm_not_equal_to_normal() {
+        let confirm = Mode::Confirm {
+            message: "Delete?".to_string(),
+            action: ConfirmAction::DeleteBranch(PathBuf::from("/repo"), "feature".to_string()),
+        };
+        assert_ne!(confirm, Mode::Normal);
+    }
+
+    #[test]
+    fn mode_text_input_equality() {
+        let m1 = Mode::TextInput {
+            prompt: "Branch name:".to_string(),
+            input: "feat".to_string(),
+            action: TextInputAction::CreateBranch,
+        };
+        let m2 = Mode::TextInput {
+            prompt: "Branch name:".to_string(),
+            input: "feat".to_string(),
+            action: TextInputAction::CreateBranch,
+        };
+        assert_eq!(m1, m2);
+    }
+
+    #[test]
+    fn mode_text_input_different_input() {
+        let m1 = Mode::TextInput {
+            prompt: "Branch name:".to_string(),
+            input: "feat-a".to_string(),
+            action: TextInputAction::CreateBranch,
+        };
+        let m2 = Mode::TextInput {
+            prompt: "Branch name:".to_string(),
+            input: "feat-b".to_string(),
+            action: TextInputAction::CreateBranch,
+        };
+        assert_ne!(m1, m2);
+    }
+
+    // --- ConfirmAction tests ---
+
+    #[test]
+    fn confirm_action_push() {
+        let action = ConfirmAction::Push(PathBuf::from("/repos/my-repo"));
+        if let ConfirmAction::Push(path) = &action {
+            assert_eq!(path, &PathBuf::from("/repos/my-repo"));
+        } else {
+            panic!("Expected ConfirmAction::Push");
+        }
+    }
+
+    #[test]
+    fn confirm_action_bulk_push() {
+        let paths = vec![PathBuf::from("/repo1"), PathBuf::from("/repo2")];
+        let action = ConfirmAction::BulkPush(paths);
+        if let ConfirmAction::BulkPush(p) = &action {
+            assert_eq!(p.len(), 2);
+            assert_eq!(p[0], PathBuf::from("/repo1"));
+            assert_eq!(p[1], PathBuf::from("/repo2"));
+        } else {
+            panic!("Expected ConfirmAction::BulkPush");
+        }
+    }
+
+    #[test]
+    fn confirm_action_stash_pop() {
+        let action = ConfirmAction::StashPop(PathBuf::from("/repo"));
+        assert!(matches!(action, ConfirmAction::StashPop(_)));
+    }
+
+    #[test]
+    fn confirm_action_discard_file() {
+        let action = ConfirmAction::DiscardFile(PathBuf::from("/repo"), "main.rs".to_string());
+        if let ConfirmAction::DiscardFile(repo, file) = &action {
+            assert_eq!(repo, &PathBuf::from("/repo"));
+            assert_eq!(file, "main.rs");
+        } else {
+            panic!("Expected ConfirmAction::DiscardFile");
+        }
+    }
+
+    #[test]
+    fn confirm_action_delete_branch() {
+        let action = ConfirmAction::DeleteBranch(PathBuf::from("/repo"), "old-feature".to_string());
+        if let ConfirmAction::DeleteBranch(repo, branch) = &action {
+            assert_eq!(repo, &PathBuf::from("/repo"));
+            assert_eq!(branch, "old-feature");
+        } else {
+            panic!("Expected ConfirmAction::DeleteBranch");
+        }
+    }
+
+    #[test]
+    fn confirm_action_merge_branch() {
+        let action = ConfirmAction::MergeBranch(PathBuf::from("/repo"), "develop".to_string());
+        if let ConfirmAction::MergeBranch(repo, branch) = &action {
+            assert_eq!(repo, &PathBuf::from("/repo"));
+            assert_eq!(branch, "develop");
+        } else {
+            panic!("Expected ConfirmAction::MergeBranch");
+        }
+    }
+
+    #[test]
+    fn confirm_action_equality() {
+        let a1 = ConfirmAction::Push(PathBuf::from("/repo"));
+        let a2 = ConfirmAction::Push(PathBuf::from("/repo"));
+        assert_eq!(a1, a2);
+    }
+
+    #[test]
+    fn confirm_action_inequality_different_variants() {
+        let a1 = ConfirmAction::Push(PathBuf::from("/repo"));
+        let a2 = ConfirmAction::StashPop(PathBuf::from("/repo"));
+        assert_ne!(a1, a2);
+    }
+
+    // --- TextInputAction tests ---
+
+    #[test]
+    fn text_input_action_create_branch() {
+        let action = TextInputAction::CreateBranch;
+        assert_eq!(action, TextInputAction::CreateBranch);
+    }
+
+    #[test]
+    fn text_input_action_rename_branch() {
+        let action = TextInputAction::RenameBranch("old-name".to_string());
+        if let TextInputAction::RenameBranch(name) = &action {
+            assert_eq!(name, "old-name");
+        } else {
+            panic!("Expected TextInputAction::RenameBranch");
+        }
+    }
+
+    #[test]
+    fn text_input_action_commit_message() {
+        let action = TextInputAction::CommitMessage;
+        assert_eq!(action, TextInputAction::CommitMessage);
+    }
+
+    #[test]
+    fn text_input_action_variants_distinct() {
+        assert_ne!(TextInputAction::CreateBranch, TextInputAction::CommitMessage);
+        assert_ne!(
+            TextInputAction::CreateBranch,
+            TextInputAction::RenameBranch("x".to_string())
+        );
+        assert_ne!(
+            TextInputAction::CommitMessage,
+            TextInputAction::RenameBranch("x".to_string())
+        );
+    }
+
+    #[test]
+    fn text_input_action_rename_branch_equality() {
+        let a = TextInputAction::RenameBranch("feat".to_string());
+        let b = TextInputAction::RenameBranch("feat".to_string());
+        assert_eq!(a, b);
+    }
+
+    #[test]
+    fn text_input_action_rename_branch_inequality() {
+        let a = TextInputAction::RenameBranch("feat-a".to_string());
+        let b = TextInputAction::RenameBranch("feat-b".to_string());
+        assert_ne!(a, b);
+    }
+
+    // --- UndoOp tests ---
+
+    #[test]
+    fn undo_op_checkout() {
+        let op = UndoOp::Checkout {
+            repo_path: PathBuf::from("/repos/app"),
+            previous_branch: "main".to_string(),
+        };
+        if let UndoOp::Checkout { repo_path, previous_branch } = &op {
+            assert_eq!(repo_path, &PathBuf::from("/repos/app"));
+            assert_eq!(previous_branch, "main");
+        } else {
+            panic!("Expected UndoOp::Checkout");
+        }
+    }
+
+    #[test]
+    fn undo_op_stash() {
+        let op = UndoOp::Stash {
+            repo_path: PathBuf::from("/repos/lib"),
+        };
+        assert!(matches!(op, UndoOp::Stash { .. }));
+    }
+
+    #[test]
+    fn undo_op_stash_pop() {
+        let op = UndoOp::StashPop {
+            repo_path: PathBuf::from("/repos/lib"),
+        };
+        if let UndoOp::StashPop { repo_path } = &op {
+            assert_eq!(repo_path, &PathBuf::from("/repos/lib"));
+        } else {
+            panic!("Expected UndoOp::StashPop");
+        }
+    }
+
+    #[test]
+    fn undo_op_clone() {
+        let op = UndoOp::Checkout {
+            repo_path: PathBuf::from("/repo"),
+            previous_branch: "develop".to_string(),
+        };
+        let cloned = op.clone();
+        if let UndoOp::Checkout { repo_path, previous_branch } = cloned {
+            assert_eq!(repo_path, PathBuf::from("/repo"));
+            assert_eq!(previous_branch, "develop");
+        } else {
+            panic!("Cloned UndoOp should be Checkout");
+        }
+    }
+
+    // --- CommandLogEntry tests ---
+
+    #[test]
+    fn command_log_entry_construction() {
+        let entry = CommandLogEntry {
+            timestamp: Instant::now(),
+            repo_name: "my-repo".to_string(),
+            command: "git pull".to_string(),
+            success: true,
+            output: "Already up to date.".to_string(),
+        };
+        assert_eq!(entry.repo_name, "my-repo");
+        assert_eq!(entry.command, "git pull");
+        assert!(entry.success);
+        assert_eq!(entry.output, "Already up to date.");
+    }
+
+    #[test]
+    fn command_log_entry_failure() {
+        let entry = CommandLogEntry {
+            timestamp: Instant::now(),
+            repo_name: "broken-repo".to_string(),
+            command: "git push".to_string(),
+            success: false,
+            output: "rejected: non-fast-forward".to_string(),
+        };
+        assert!(!entry.success);
+        assert_eq!(entry.output, "rejected: non-fast-forward");
+    }
+
+    #[test]
+    fn command_log_entry_clone() {
+        let entry = CommandLogEntry {
+            timestamp: Instant::now(),
+            repo_name: "repo".to_string(),
+            command: "git fetch".to_string(),
+            success: true,
+            output: String::new(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.repo_name, "repo");
+        assert_eq!(cloned.command, "git fetch");
+        assert!(cloned.success);
+        assert!(cloned.output.is_empty());
+    }
+
+    // --- CommitEntry tests ---
+
+    #[test]
+    fn commit_entry_construction() {
+        let entry = CommitEntry {
+            hash: "abc1234".to_string(),
+            author: "Alice <alice@example.com>".to_string(),
+            date: "2025-01-15".to_string(),
+            message: "fix: resolve null pointer in parser".to_string(),
+        };
+        assert_eq!(entry.hash, "abc1234");
+        assert_eq!(entry.author, "Alice <alice@example.com>");
+        assert_eq!(entry.date, "2025-01-15");
+        assert_eq!(entry.message, "fix: resolve null pointer in parser");
+    }
+
+    #[test]
+    fn commit_entry_clone() {
+        let entry = CommitEntry {
+            hash: "deadbeef".to_string(),
+            author: "Bob".to_string(),
+            date: "2025-06-01".to_string(),
+            message: "feat: add search".to_string(),
+        };
+        let cloned = entry.clone();
+        assert_eq!(cloned.hash, "deadbeef");
+        assert_eq!(cloned.author, "Bob");
+        assert_eq!(cloned.date, "2025-06-01");
+        assert_eq!(cloned.message, "feat: add search");
+    }
+
+    #[test]
+    fn commit_entry_empty_fields() {
+        let entry = CommitEntry {
+            hash: String::new(),
+            author: String::new(),
+            date: String::new(),
+            message: String::new(),
+        };
+        assert!(entry.hash.is_empty());
+        assert!(entry.author.is_empty());
+        assert!(entry.date.is_empty());
+        assert!(entry.message.is_empty());
+    }
+}
