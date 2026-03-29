@@ -35,6 +35,15 @@ Built with Rust, [ratatui](https://github.com/ratatui/ratatui), and [libgit2](ht
 - **Search/filter** — press `/` to filter repos or branches by name
 - **Confirmation dialogs** — destructive actions (push, stash pop) require confirmation
 - **Diff viewer** — syntax-highlighted scrollable diff overlay
+- **Files panel** — stage, unstage, and discard individual files
+- **Bulk operations** — multi-select repos with Space, run git ops on all at once
+- **Branch actions** — create, delete, rename, merge branches from the TUI
+- **Commit log** — view commit history and create commits
+- **Command log** — see all executed git commands with results
+- **Mouse support** — click to select, scroll wheel to navigate
+- **Zoom mode** — full-screen view for any panel
+- **File watching** — auto-refresh when repos change externally
+- **Undo** — Ctrl+z to reverse checkout and stash operations
 - **Instant startup** — native Rust binary, <50ms cold start
 
 ## Installation
@@ -86,6 +95,21 @@ cd ~/Projects/my-workspace && gitool
 | `d` | Show diff |
 | `/` | Filter repos or branches |
 | `w` | Switch workspace |
+| `l` | Show commit log |
+| `c` | Create commit (staged files) |
+| `n` | Create new branch |
+| `D` | Delete branch |
+| `R` | Rename branch |
+| `m` | Merge branch into current |
+| `a` | Stage file (Files panel) |
+| `u` | Unstage file (Files panel) |
+| `x` | Discard file changes (Files panel) |
+| `Space` | Mark/unmark repo for bulk ops |
+| `Ctrl+a` | Mark all repos |
+| `Ctrl+d` | Unmark all repos |
+| `Ctrl+z` | Undo last operation |
+| `z` | Toggle zoom mode |
+| `` ` `` | Show command log |
 | `h` | Hide/unhide repo |
 | `H` | Toggle showing hidden repos |
 | `r` | Refresh all repos |
@@ -169,23 +193,18 @@ src/
 | Confirmation dialogs | Done |
 | Non-blocking async git ops | Done |
 | Parallel repo scanning | Done |
-
-### Planned
-
-| Feature | Priority | Description |
-|---------|----------|-------------|
-| Files panel | P1 | Stage/unstage/discard individual files |
-| Bulk operations | P1 | Select multiple repos, run git ops on all at once |
-| Command log | P1 | Show executed git commands (toggle with `` ` ``) |
-| Lazy drift calculation | P1 | Compute branch drift on-demand for faster startup |
-| Commit log | P2 | View commit history, create commits |
-| Branch actions | P2 | Create, delete, rename, merge branches |
-| File watching | P2 | Auto-refresh when repos change externally |
-| Render optimization | P2 | Only redraw on state changes |
-| Mouse support | P3 | Click to select, scroll with wheel |
-| Undo | P3 | Press `z` to undo last git operation |
-| Zoom mode | P3 | Full-screen detail view for a single repo |
-| Git object caching | P3 | Reuse libgit2 handles across scans |
+| Command log (`` ` ``) | Done |
+| Lazy drift calculation | Done |
+| Render optimization (dirty flag) | Done |
+| Files panel (stage/unstage/discard) | Done |
+| Bulk operations (multi-select repos) | Done |
+| Branch actions (create/delete/rename/merge) | Done |
+| Commit log (`l`) and commit creation (`c`) | Done |
+| Mouse support (click + scroll) | Done |
+| Zoom mode (`z`) | Done |
+| File watching (auto-refresh) | Done |
+| Git object caching (scan_repo_full) | Done |
+| Undo (`Ctrl+z`) | Done |
 
 ## Tech Stack
 
