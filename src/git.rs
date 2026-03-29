@@ -344,8 +344,14 @@ pub fn git_unstage(path: &Path, file: &str) -> Result<String, String> {
     run_git(path, &["restore", "--staged", file])
 }
 
-pub fn git_discard(path: &Path, file: &str) -> Result<String, String> {
-    run_git(path, &["checkout", "--", file])
+pub fn git_discard(path: &Path, file: &str, is_untracked: bool) -> Result<String, String> {
+    if is_untracked {
+        std::fs::remove_file(path.join(file))
+            .map(|_| format!("Removed {}", file))
+            .map_err(|e| e.to_string())
+    } else {
+        run_git(path, &["checkout", "--", file])
+    }
 }
 
 pub fn git_log(path: &Path, limit: usize) -> Vec<crate::app::CommitEntry> {
@@ -380,19 +386,19 @@ pub fn git_commit(path: &Path, message: &str) -> Result<String, String> {
 }
 
 pub fn git_create_branch(path: &Path, name: &str) -> Result<String, String> {
-    run_git(path, &["checkout", "-b", name])
+    run_git(path, &["checkout", "-b", "--", name])
 }
 
 pub fn git_delete_branch(path: &Path, name: &str) -> Result<String, String> {
-    run_git(path, &["branch", "-d", name])
+    run_git(path, &["branch", "-d", "--", name])
 }
 
 pub fn git_rename_branch(path: &Path, old: &str, new: &str) -> Result<String, String> {
-    run_git(path, &["branch", "-m", old, new])
+    run_git(path, &["branch", "-m", "--", old, new])
 }
 
 pub fn git_merge(path: &Path, branch: &str) -> Result<String, String> {
-    run_git(path, &["merge", branch])
+    run_git(path, &["merge", "--", branch])
 }
 
 // Git mutation operations — shell out to git CLI
@@ -410,7 +416,7 @@ pub fn git_fetch(path: &Path) -> Result<String, String> {
 }
 
 pub fn git_checkout(path: &Path, branch: &str) -> Result<String, String> {
-    run_git(path, &["checkout", branch])
+    run_git(path, &["checkout", "--", branch])
 }
 
 pub fn git_stash(path: &Path) -> Result<String, String> {

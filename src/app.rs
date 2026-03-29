@@ -3,7 +3,7 @@ use crate::git;
 use crate::types::{FileEntry, RepoStatus};
 use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use std::collections::HashSet;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
@@ -45,7 +45,7 @@ pub enum ConfirmAction {
     Push(PathBuf),
     BulkPush(Vec<PathBuf>),
     StashPop(PathBuf),
-    DiscardFile(PathBuf, String),
+    DiscardFile(PathBuf, String, bool), // repo_path, file_path, is_untracked
     DeleteBranch(PathBuf, String),
     MergeBranch(PathBuf, String),
 }
@@ -114,7 +114,7 @@ pub struct App {
     pub workspace_selector_index: usize,
     pub should_quit: bool,
     pub pending_ops: HashSet<PathBuf>,
-    pub marked_repos: HashSet<usize>,
+    pub marked_repos: HashSet<PathBuf>,
     pub filter_text: String,
     pub filter_active: bool,
     pub files: Vec<FileEntry>,
@@ -499,16 +499,18 @@ impl App {
     // Bulk selection
 
     pub fn toggle_mark_repo(&mut self) {
-        if self.marked_repos.contains(&self.selected_repo) {
-            self.marked_repos.remove(&self.selected_repo);
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        let path = repo.path.clone();
+        if self.marked_repos.contains(&path) {
+            self.marked_repos.remove(&path);
         } else {
-            self.marked_repos.insert(self.selected_repo);
+            self.marked_repos.insert(path);
         }
     }
 
     pub fn mark_all_repos(&mut self) {
-        for i in 0..self.repos.len() {
-            self.marked_repos.insert(i);
+        for repo in &self.repos {
+            self.marked_repos.insert(repo.path.clone());
         }
     }
 
@@ -518,15 +520,16 @@ impl App {
 
     fn bulk_targets(&self) -> Vec<PathBuf> {
         if self.marked_repos.is_empty() {
-            // No marks: operate on selected repo only
             self.repos.get(self.selected_repo)
                 .map(|r| vec![r.path.clone()])
                 .unwrap_or_default()
         } else {
-            self.marked_repos.iter()
-                .filter_map(|&i| self.repos.get(i).map(|r| r.path.clone()))
-                .collect()
+            self.marked_repos.iter().cloned().collect()
         }
+    }
+
+    pub fn is_repo_marked(&self, path: &Path) -> bool {
+        self.marked_repos.contains(path)
     }
 
     // Git actions — all non-blocking via dispatch
@@ -659,7 +662,11 @@ impl App {
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         self.mode = Mode::Confirm {
             message: format!("Discard changes to {}? [y/n]", file.path),
-            action: ConfirmAction::DiscardFile(repo.path.clone(), file.path.clone()),
+            action: ConfirmAction::DiscardFile(
+                repo.path.clone(),
+                file.path.clone(),
+                file.status == crate::types::FileStatus::Untracked,
+            ),
         };
     }
 
@@ -837,8 +844,8 @@ impl App {
                         git::git_merge(p, &branch_name)
                     });
                 }
-                ConfirmAction::DiscardFile(repo_path, file_path) => {
-                    match git::git_discard(&repo_path, &file_path) {
+                ConfirmAction::DiscardFile(repo_path, file_path, is_untracked) => {
+                    match git::git_discard(&repo_path, &file_path, is_untracked) {
                         Ok(_) => self.notify(format!("Discarded: {}", file_path), false),
                         Err(e) => self.notify(format!("Discard failed: {}", e), true),
                     }
@@ -854,7 +861,7 @@ impl App {
         self.notify("Cancelled".to_string(), false);
     }
 
-    pub fn is_repo_busy(&self, path: &PathBuf) -> bool {
+    pub fn is_repo_busy(&self, path: &Path) -> bool {
         self.pending_ops.contains(path)
     }
 }
@@ -1045,10 +1052,11 @@ mod tests {
 
     #[test]
     fn confirm_action_discard_file() {
-        let action = ConfirmAction::DiscardFile(PathBuf::from("/repo"), "main.rs".to_string());
-        if let ConfirmAction::DiscardFile(repo, file) = &action {
+        let action = ConfirmAction::DiscardFile(PathBuf::from("/repo"), "main.rs".to_string(), false);
+        if let ConfirmAction::DiscardFile(repo, file, untracked) = &action {
             assert_eq!(repo, &PathBuf::from("/repo"));
             assert_eq!(file, "main.rs");
+            assert!(!untracked);
         } else {
             panic!("Expected ConfirmAction::DiscardFile");
         }

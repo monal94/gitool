@@ -26,10 +26,9 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let visible = app.visible_repos();
     let items: Vec<ListItem> = visible
         .iter()
-        .enumerate()
-        .map(|(idx, repo)| {
+        .map(|repo| {
             let is_hidden = hidden.contains(&repo.name);
-            let is_marked = app.marked_repos.contains(&idx);
+            let is_marked = app.is_repo_marked(&repo.path);
             let mut glyphs = Vec::new();
 
             if app.is_repo_busy(&repo.path) {
