@@ -79,6 +79,7 @@ pub enum UndoOp {
 #[derive(Debug, Clone)]
 pub struct CommitEntry {
     pub hash: String,
+    #[allow(dead_code)]
     pub author: String,
     pub date: String,
     pub message: String,
@@ -627,7 +628,7 @@ impl App {
                         .find_map(|e| {
                             let event_path = e.path.to_string_lossy();
                             repo_paths.iter().find(|rp| {
-                                event_path.starts_with(&rp.to_string_lossy().as_ref())
+                                event_path.starts_with(rp.to_string_lossy().as_ref())
                             }).cloned()
                         });
                     if repo_path.is_some() || events.iter().any(|e| matches!(e.kind, DebouncedEventKind::Any)) {
