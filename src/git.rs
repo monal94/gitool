@@ -62,6 +62,30 @@ pub fn scan_repo(path: &Path) -> Option<RepoStatus> {
     })
 }
 
+/// Full scan including branches — single Repository::open call.
+pub fn scan_repo_full(path: &Path) -> Option<RepoStatus> {
+    let repo = Repository::open(path).ok()?;
+    let name = path.file_name()?.to_string_lossy().to_string();
+
+    let branch = current_branch(&repo);
+    let (ahead, behind) = upstream_drift(&repo);
+    let dirty = dirty_count(&repo);
+    let stash = stash_count(path);
+    let branches = collect_branches(&repo, &branch);
+
+    Some(RepoStatus {
+        name,
+        path: path.to_path_buf(),
+        branch,
+        ahead,
+        behind,
+        dirty,
+        stash,
+        branches,
+        branches_loaded: true,
+    })
+}
+
 /// Load branches and drift for a single repo (called on-demand).
 pub fn load_branches(path: &Path) -> Vec<BranchEntry> {
     let Some(repo) = Repository::open(path).ok() else {

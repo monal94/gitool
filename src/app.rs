@@ -234,10 +234,15 @@ impl App {
                             self.notify(format!("{} failed: {}", label, e), true);
                         }
                     }
-                    // Rescan the affected repo
-                    if let Some(new_status) = git::scan_repo(&repo_path) {
-                        let is_selected = self.repos.get(self.selected_repo)
-                            .is_some_and(|r| r.path == repo_path);
+                    // Rescan the affected repo (full scan for selected, light for others)
+                    let is_selected = self.repos.get(self.selected_repo)
+                        .is_some_and(|r| r.path == repo_path);
+                    let new_status = if is_selected {
+                        git::scan_repo_full(&repo_path)
+                    } else {
+                        git::scan_repo(&repo_path)
+                    };
+                    if let Some(new_status) = new_status {
                         if let Some(pos) = self.repos.iter().position(|r| r.path == repo_path) {
                             self.repos[pos] = new_status.clone();
                         }
@@ -245,7 +250,7 @@ impl App {
                             self.all_repos[pos] = new_status;
                         }
                         if is_selected {
-                            self.ensure_branches_loaded();
+                            self.reload_files();
                         }
                     }
                 }
@@ -620,14 +625,14 @@ impl App {
     fn rescan_selected_repo(&mut self) {
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         let path = repo.path.clone();
-        if let Some(new_status) = git::scan_repo(&path) {
+        if let Some(new_status) = git::scan_repo_full(&path) {
             if let Some(pos) = self.repos.iter().position(|r| r.path == path) {
                 self.repos[pos] = new_status.clone();
             }
             if let Some(pos) = self.all_repos.iter().position(|r| r.path == path) {
                 self.all_repos[pos] = new_status;
             }
-            self.ensure_branches_loaded();
+            self.reload_files();
         }
     }
 
