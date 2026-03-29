@@ -5,6 +5,11 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 
 pub fn scan_workspace(path: &Path, hidden: &[String]) -> Vec<RepoStatus> {
+    // If the path itself is a git repo, treat it as a single-repo workspace
+    if path.join(".git").is_dir() {
+        return scan_repo(path).into_iter().collect();
+    }
+
     let Ok(entries) = std::fs::read_dir(path) else {
         return Vec::new();
     };
