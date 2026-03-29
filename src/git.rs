@@ -91,8 +91,13 @@ pub fn load_branches(path: &Path) -> Vec<BranchEntry> {
     let Some(repo) = Repository::open(path).ok() else {
         return Vec::new();
     };
-    let branch = current_branch(&repo);
-    collect_branches(&repo, &branch)
+    load_branches_with_repo(&repo)
+}
+
+/// Load branches using an already-opened Repository handle.
+pub fn load_branches_with_repo(repo: &Repository) -> Vec<BranchEntry> {
+    let branch = current_branch(repo);
+    collect_branches(repo, &branch)
 }
 
 fn current_branch(repo: &Repository) -> String {
@@ -259,6 +264,11 @@ pub fn get_file_statuses(path: &Path) -> Vec<FileEntry> {
     let Ok(repo) = Repository::open(path) else {
         return Vec::new();
     };
+    get_file_statuses_with_repo(&repo)
+}
+
+/// Get file statuses using an already-opened Repository handle.
+pub fn get_file_statuses_with_repo(repo: &Repository) -> Vec<FileEntry> {
     let mut opts = StatusOptions::new();
     opts.include_untracked(true)
         .recurse_untracked_dirs(true);

@@ -166,6 +166,8 @@ pub struct App {
     pub highlighted_diff: Option<Vec<ratatui::text::Line<'static>>>,
     pub highlighted_commit_diff: Option<Vec<ratatui::text::Line<'static>>>,
     highlighter: crate::highlight::Highlighter,
+    cached_repo: Option<git2::Repository>,
+    cached_repo_path: Option<PathBuf>,
     result_rx: Receiver<GitResult>,
     task_tx: Sender<GitResult>,
     _watcher: Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>,
@@ -225,6 +227,8 @@ impl App {
             highlighted_diff: None,
             highlighted_commit_diff: None,
             highlighter: crate::highlight::Highlighter::new(),
+            cached_repo: None,
+            cached_repo_path: None,
             result_rx,
             task_tx,
             _watcher: None,
@@ -295,6 +299,8 @@ impl App {
                             self.notify(format!("{} failed: {}", label, e), true);
                         }
                     }
+                    // Invalidate cached repo since state changed
+                    self.invalidate_repo_cache();
                     // Rescan the affected repo (full scan for selected, light for others)
                     let is_selected = self.repos.get(self.selected_repo)
                         .is_some_and(|r| r.path == repo_path);
@@ -650,12 +656,31 @@ impl App {
         }
     }
 
+    /// Get or cache a Repository handle for the given path.
+    fn ensure_cached_repo(&mut self, path: &Path) {
+        if self.cached_repo_path.as_deref() != Some(path) {
+            self.cached_repo = git2::Repository::open(path).ok();
+            self.cached_repo_path = Some(path.to_path_buf());
+        }
+    }
+
+    /// Invalidate the cached repo (call after mutations that change repo state).
+    fn invalidate_repo_cache(&mut self) {
+        self.cached_repo = None;
+        self.cached_repo_path = None;
+    }
+
     /// Load branches for the currently selected repo if not already loaded.
     pub fn ensure_branches_loaded(&mut self) {
         if let Some(repo) = self.repos.get(self.selected_repo) {
             let path = repo.path.clone();
             if !repo.branches_loaded {
-                let branches = git::load_branches(&path);
+                self.ensure_cached_repo(&path);
+                let branches = if let Some(ref cached) = self.cached_repo {
+                    git::load_branches_with_repo(cached)
+                } else {
+                    git::load_branches(&path)
+                };
                 if let Some(repo) = self.repos.get_mut(self.selected_repo) {
                     repo.branches = branches.clone();
                     repo.branches_loaded = true;
@@ -672,7 +697,13 @@ impl App {
     /// Reload file statuses for the currently selected repo.
     fn reload_files(&mut self) {
         if let Some(repo) = self.repos.get(self.selected_repo) {
-            self.files = git::get_file_statuses(&repo.path);
+            let path = repo.path.clone();
+            self.ensure_cached_repo(&path);
+            self.files = if let Some(ref cached) = self.cached_repo {
+                git::get_file_statuses_with_repo(cached)
+            } else {
+                git::get_file_statuses(&path)
+            };
             if self.selected_file >= self.files.len() {
                 self.selected_file = self.files.len().saturating_sub(1);
             }
