@@ -8,23 +8,51 @@ use std::sync::mpsc::{self, Receiver, Sender};
 use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Tab {
-    Status,
-    Log,
+pub enum SidePanel {
+    Repos,     // 1
+    Files,     // 2
+    Branches,  // 3
+    Commits,   // 4
+    Stash,     // 5
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum Panel {
-    RepoList,
-    Branches,
-    Files,
+impl SidePanel {
+    pub fn next(self) -> Self {
+        match self {
+            Self::Repos => Self::Files,
+            Self::Files => Self::Branches,
+            Self::Branches => Self::Commits,
+            Self::Commits => Self::Stash,
+            Self::Stash => Self::Repos,
+        }
+    }
+
+    pub fn prev(self) -> Self {
+        match self {
+            Self::Repos => Self::Stash,
+            Self::Files => Self::Repos,
+            Self::Branches => Self::Files,
+            Self::Commits => Self::Branches,
+            Self::Stash => Self::Commits,
+        }
+    }
+
+    pub fn from_num(n: char) -> Option<Self> {
+        match n {
+            '1' => Some(Self::Repos),
+            '2' => Some(Self::Files),
+            '3' => Some(Self::Branches),
+            '4' => Some(Self::Commits),
+            '5' => Some(Self::Stash),
+            _ => None,
+        }
+    }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum LogPanel {
-    Commits,
-    CommitFiles,
-    DiffPreview,
+#[derive(Debug, Clone)]
+pub struct StashEntry {
+    pub index: usize,
+    pub message: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -132,40 +160,48 @@ pub enum GitResult {
 }
 
 pub struct App {
+    // Data
     pub repos: Vec<RepoStatus>,
     pub all_repos: Vec<RepoStatus>,
+    pub files: Vec<FileEntry>,
+    pub commit_log: Vec<CommitEntry>,
+    pub commit_files: Vec<CommitFileEntry>,
+    pub stash_list: Vec<StashEntry>,
+    pub command_log: Vec<CommandLogEntry>,
+    // Selection indices
     pub selected_repo: usize,
+    pub selected_file: usize,
     pub selected_branch: usize,
-    pub active_panel: Panel,
+    pub commit_log_selected: usize,
+    pub commit_files_selected: usize,
+    pub selected_stash: usize,
+    // UI state
+    pub active_side: SidePanel,
+    pub mode: Mode,
+    pub notification: Option<Notification>,
+    pub dirty: bool,
+    pub should_quit: bool,
+    // Preview (right panel)
+    pub preview_content: String,
+    pub preview_scroll: usize,
+    // Diff overlay
+    pub diff_content: String,
+    pub diff_scroll: u16,
+    // Command log overlay
+    pub command_log_scroll: u16,
+    // Workspace
     pub config: Config,
     pub workspace_path: PathBuf,
     pub workspace_name: String,
-    pub mode: Mode,
-    pub notification: Option<Notification>,
-    pub show_hidden: bool,
-    pub diff_content: String,
-    pub diff_scroll: u16,
     pub workspace_selector_index: usize,
-    pub should_quit: bool,
-    pub pending_ops: HashSet<PathBuf>,
-    pub marked_repos: HashSet<PathBuf>,
+    pub show_hidden: bool,
     pub filter_text: String,
     pub filter_active: bool,
-    pub files: Vec<FileEntry>,
-    pub selected_file: usize,
-    pub commit_log: Vec<CommitEntry>,
-    pub command_log: Vec<CommandLogEntry>,
-    pub command_log_scroll: u16,
-    pub dirty: bool,
-    pub zoomed_panel: Option<Panel>,
+    // Operations
+    pub pending_ops: HashSet<PathBuf>,
+    pub marked_repos: HashSet<PathBuf>,
     pub undo_stack: Vec<UndoOp>,
-    pub active_tab: Tab,
-    pub active_log_panel: LogPanel,
-    pub commit_log_selected: usize,
-    pub commit_files: Vec<CommitFileEntry>,
-    pub commit_files_selected: usize,
-    pub commit_diff_preview: String,
-    pub commit_diff_scroll: usize,
+    // Internal
     pub highlighter: crate::highlight::Highlighter,
     cached_repo: Option<git2::Repository>,
     cached_repo_path: Option<PathBuf>,
@@ -194,38 +230,37 @@ impl App {
         let mut app = Self {
             repos,
             all_repos,
+            files: Vec::new(),
+            commit_log: Vec::new(),
+            commit_files: Vec::new(),
+            stash_list: Vec::new(),
+            command_log: Vec::new(),
             selected_repo: 0,
+            selected_file: 0,
             selected_branch: 0,
-            active_panel: Panel::RepoList,
+            commit_log_selected: 0,
+            commit_files_selected: 0,
+            selected_stash: 0,
+            active_side: SidePanel::Repos,
+            mode: Mode::Normal,
+            notification: None,
+            dirty: true,
+            should_quit: false,
+            preview_content: String::new(),
+            preview_scroll: 0,
+            diff_content: String::new(),
+            diff_scroll: 0,
+            command_log_scroll: 0,
             config,
             workspace_path,
             workspace_name,
-            mode: Mode::Normal,
-            notification: None,
-            show_hidden: false,
-            diff_content: String::new(),
-            diff_scroll: 0,
             workspace_selector_index: 0,
-            should_quit: false,
-            pending_ops: HashSet::new(),
-            marked_repos: HashSet::new(),
+            show_hidden: false,
             filter_text: String::new(),
             filter_active: false,
-            files: Vec::new(),
-            selected_file: 0,
-            commit_log: Vec::new(),
-            command_log: Vec::new(),
-            command_log_scroll: 0,
-            dirty: true,
-            zoomed_panel: None,
+            pending_ops: HashSet::new(),
+            marked_repos: HashSet::new(),
             undo_stack: Vec::new(),
-            active_tab: Tab::Status,
-            active_log_panel: LogPanel::Commits,
-            commit_log_selected: 0,
-            commit_files: Vec::new(),
-            commit_files_selected: 0,
-            commit_diff_preview: String::new(),
-            commit_diff_scroll: 0,
             highlighter: crate::highlight::Highlighter::new(),
             cached_repo: None,
             cached_repo_path: None,
@@ -244,7 +279,7 @@ impl App {
     }
 
     pub fn visible_repos(&self) -> Vec<&RepoStatus> {
-        if self.filter_active && !self.filter_text.is_empty() && self.active_panel == Panel::RepoList {
+        if self.filter_active && !self.filter_text.is_empty() && self.active_side == SidePanel::Repos {
             let ft = self.filter_text.to_lowercase();
             self.repos.iter().filter(|r| r.name.to_lowercase().contains(&ft)).collect()
         } else {
@@ -253,7 +288,7 @@ impl App {
     }
 
     pub fn filtered_branch_indices(&self) -> Option<Vec<usize>> {
-        if !self.filter_active || self.filter_text.is_empty() || self.active_panel != Panel::Branches {
+        if !self.filter_active || self.filter_text.is_empty() || self.active_side != SidePanel::Branches {
             return None;
         }
         let repo = self.repos.get(self.selected_repo)?;
@@ -388,13 +423,13 @@ impl App {
                 GitResult::CommitDetailReady { files, diff } => {
                     self.commit_files = files;
                     self.commit_files_selected = 0;
-                    self.commit_diff_preview = diff;
-                    self.commit_diff_scroll = 0;
+                    self.preview_content = diff;
+                    self.preview_scroll = 0;
                     self.dirty = true;
                 }
                 GitResult::CommitFileDiffReady { diff } => {
-                    self.commit_diff_preview = diff;
-                    self.commit_diff_scroll = 0;
+                    self.preview_content = diff;
+                    self.preview_scroll = 0;
                     self.dirty = true;
                 }
             }
@@ -496,10 +531,9 @@ impl App {
         }
     }
 
-    pub fn switch_tab(&mut self, tab: Tab) {
-        if self.active_tab == tab { return; }
-        self.active_tab = tab;
-        if tab == Tab::Log {
+    pub fn switch_panel(&mut self, panel: SidePanel) {
+        self.active_side = panel;
+        if panel == SidePanel::Commits {
             self.load_log();
         }
     }
@@ -514,10 +548,8 @@ impl App {
         self.commit_log_selected = 0;
         self.commit_files.clear();
         self.commit_files_selected = 0;
-        self.commit_diff_preview.clear();
-
-        self.commit_diff_scroll = 0;
-        self.active_log_panel = LogPanel::Commits;
+        self.preview_content.clear();
+        self.preview_scroll = 0;
         // Load in background
         rayon::spawn(move || {
             let commits = git::git_log(&path, 200);
@@ -529,8 +561,7 @@ impl App {
     pub fn load_commit_detail(&mut self) {
         let Some(entry) = self.commit_log.get(self.commit_log_selected) else {
             self.commit_files.clear();
-            self.commit_diff_preview.clear();
-    
+            self.preview_content.clear();
             return;
         };
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
@@ -560,72 +591,37 @@ impl App {
     }
 
     pub fn next_log_panel(&mut self) {
-        self.active_log_panel = match self.active_log_panel {
-            LogPanel::Commits => LogPanel::CommitFiles,
-            LogPanel::CommitFiles => LogPanel::DiffPreview,
-            LogPanel::DiffPreview => LogPanel::Commits,
-        };
+        // In commits view, cycle focus: commit list -> commit files -> back
+        // The diff preview is always shown in the right panel.
+        if self.commit_files_selected == 0 && !self.commit_files.is_empty() {
+            // Focus shifts to commit files sub-list
+            self.commit_files_selected = 0;
+        }
     }
 
     pub fn log_move_up(&mut self) {
-        match self.active_log_panel {
-            LogPanel::Commits => {
-                if self.commit_log_selected > 0 {
-                    self.commit_log_selected -= 1;
-                    self.load_commit_detail();
-                }
-            }
-            LogPanel::CommitFiles => {
-                if self.commit_files_selected > 0 {
-                    self.commit_files_selected -= 1;
-                    self.load_commit_file_diff();
-                }
-            }
-            LogPanel::DiffPreview => {
-                self.commit_diff_scroll = self.commit_diff_scroll.saturating_sub(1);
-            }
+        if self.commit_log_selected > 0 {
+            self.commit_log_selected -= 1;
+            self.load_commit_detail();
         }
     }
 
     pub fn log_move_down(&mut self) {
-        match self.active_log_panel {
-            LogPanel::Commits => {
-                if self.commit_log_selected + 1 < self.commit_log.len() {
-                    self.commit_log_selected += 1;
-                    self.load_commit_detail();
-                }
-            }
-            LogPanel::CommitFiles => {
-                if self.commit_files_selected + 1 < self.commit_files.len() {
-                    self.commit_files_selected += 1;
-                    self.load_commit_file_diff();
-                }
-            }
-            LogPanel::DiffPreview => {
-                self.commit_diff_scroll += 1;
-            }
+        if self.commit_log_selected + 1 < self.commit_log.len() {
+            self.commit_log_selected += 1;
+            self.load_commit_detail();
         }
     }
 
     pub fn log_page_down(&mut self) {
-        if self.active_log_panel == LogPanel::DiffPreview {
-            self.commit_diff_scroll += 20;
-        }
+        self.preview_scroll += 20;
     }
 
     pub fn log_page_up(&mut self) {
-        if self.active_log_panel == LogPanel::DiffPreview {
-            self.commit_diff_scroll = self.commit_diff_scroll.saturating_sub(20);
-        }
+        self.preview_scroll = self.preview_scroll.saturating_sub(20);
     }
 
-    pub fn toggle_zoom(&mut self) {
-        if self.zoomed_panel.is_some() {
-            self.zoomed_panel = None;
-        } else {
-            self.zoomed_panel = Some(self.active_panel);
-        }
-    }
+    // Zoom mode removed in new layout.
 
     fn push_undo(&mut self, op: UndoOp) {
         if self.undo_stack.len() >= 50 {
@@ -740,56 +736,82 @@ impl App {
     // Navigation
 
     pub fn move_up(&mut self) {
-        match self.active_panel {
-            Panel::RepoList => {
+        match self.active_side {
+            SidePanel::Repos => {
                 if self.selected_repo > 0 {
                     self.selected_repo -= 1;
                     self.selected_branch = 0;
                     self.ensure_branches_loaded();
                 }
             }
-            Panel::Branches => {
+            SidePanel::Branches => {
                 if self.selected_branch > 0 {
                     self.selected_branch -= 1;
                 }
             }
-            Panel::Files => {
+            SidePanel::Files => {
                 if self.selected_file > 0 {
                     self.selected_file -= 1;
+                }
+            }
+            SidePanel::Commits => {
+                self.log_move_up();
+            }
+            SidePanel::Stash => {
+                if self.selected_stash > 0 {
+                    self.selected_stash -= 1;
                 }
             }
         }
     }
 
     pub fn move_down(&mut self) {
-        match self.active_panel {
-            Panel::RepoList => {
+        match self.active_side {
+            SidePanel::Repos => {
                 if self.selected_repo + 1 < self.repos.len() {
                     self.selected_repo += 1;
                     self.selected_branch = 0;
                     self.ensure_branches_loaded();
                 }
             }
-            Panel::Branches => {
+            SidePanel::Branches => {
                 if let Some(repo) = self.selected_repo()
                     && self.selected_branch + 1 < repo.branches.len() {
                         self.selected_branch += 1;
                     }
             }
-            Panel::Files => {
+            SidePanel::Files => {
                 if self.selected_file + 1 < self.files.len() {
                     self.selected_file += 1;
+                }
+            }
+            SidePanel::Commits => {
+                self.log_move_down();
+            }
+            SidePanel::Stash => {
+                if self.selected_stash + 1 < self.stash_list.len() {
+                    self.selected_stash += 1;
                 }
             }
         }
     }
 
     pub fn next_panel(&mut self) {
-        self.active_panel = match self.active_panel {
-            Panel::RepoList => Panel::Branches,
-            Panel::Branches => Panel::Files,
-            Panel::Files => Panel::RepoList,
-        };
+        self.active_side = self.active_side.next();
+    }
+
+    pub fn prev_panel(&mut self) {
+        self.active_side = self.active_side.prev();
+    }
+
+    /// Alias for `move_up` — used by key handlers.
+    pub fn side_move_up(&mut self) {
+        self.move_up();
+    }
+
+    /// Alias for `move_down` — used by key handlers.
+    pub fn side_move_down(&mut self) {
+        self.move_down();
     }
 
     // Bulk selection
@@ -880,11 +902,11 @@ impl App {
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         let path = repo.path.clone();
 
-        let branch_name = match self.active_panel {
-            Panel::Branches => {
+        let branch_name = match self.active_side {
+            SidePanel::Branches => {
                 repo.branches.get(self.selected_branch).map(|b| b.name.clone())
             }
-            Panel::RepoList | Panel::Files => None,
+            _ => None,
         };
 
         let Some(branch) = branch_name else {
@@ -990,7 +1012,7 @@ impl App {
     }
 
     pub fn show_commit_log(&mut self) {
-        self.switch_tab(Tab::Log);
+        self.switch_panel(SidePanel::Commits);
     }
 
     pub fn create_commit_prompt(&mut self) {
@@ -1010,7 +1032,7 @@ impl App {
     }
 
     pub fn delete_branch(&mut self) {
-        if self.active_panel != Panel::Branches { return; }
+        if self.active_side != SidePanel::Branches { return; }
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         let Some(branch) = repo.branches.get(self.selected_branch) else { return };
         if branch.is_current {
@@ -1024,7 +1046,7 @@ impl App {
     }
 
     pub fn rename_branch_prompt(&mut self) {
-        if self.active_panel != Panel::Branches { return; }
+        if self.active_side != SidePanel::Branches { return; }
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         let Some(branch) = repo.branches.get(self.selected_branch) else { return };
         if !branch.has_local {
@@ -1040,7 +1062,7 @@ impl App {
     }
 
     pub fn merge_branch(&mut self) {
-        if self.active_panel != Panel::Branches { return; }
+        if self.active_side != SidePanel::Branches { return; }
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         let Some(branch) = repo.branches.get(self.selected_branch) else { return };
         if branch.is_current {
@@ -1168,61 +1190,84 @@ impl App {
 mod tests {
     use super::*;
 
-    // --- Panel cycling tests ---
+    // --- SidePanel cycling tests ---
 
-    fn next_panel(p: Panel) -> Panel {
-        match p {
-            Panel::RepoList => Panel::Branches,
-            Panel::Branches => Panel::Files,
-            Panel::Files => Panel::RepoList,
-        }
+    #[test]
+    fn panel_next_repos_to_files() {
+        assert_eq!(SidePanel::Repos.next(), SidePanel::Files);
     }
 
     #[test]
-    fn panel_next_repo_list_to_branches() {
-        assert_eq!(next_panel(Panel::RepoList), Panel::Branches);
+    fn panel_next_files_to_branches() {
+        assert_eq!(SidePanel::Files.next(), SidePanel::Branches);
     }
 
     #[test]
-    fn panel_next_branches_to_files() {
-        assert_eq!(next_panel(Panel::Branches), Panel::Files);
+    fn panel_next_branches_to_commits() {
+        assert_eq!(SidePanel::Branches.next(), SidePanel::Commits);
     }
 
     #[test]
-    fn panel_next_files_to_repo_list() {
-        assert_eq!(next_panel(Panel::Files), Panel::RepoList);
+    fn panel_next_commits_to_stash() {
+        assert_eq!(SidePanel::Commits.next(), SidePanel::Stash);
+    }
+
+    #[test]
+    fn panel_next_stash_to_repos() {
+        assert_eq!(SidePanel::Stash.next(), SidePanel::Repos);
     }
 
     #[test]
     fn panel_full_cycle() {
-        let start = Panel::RepoList;
-        let second = next_panel(start);
-        let third = next_panel(second);
-        let back = next_panel(third);
-        assert_eq!(back, Panel::RepoList);
+        let start = SidePanel::Repos;
+        let mut current = start;
+        for _ in 0..5 {
+            current = current.next();
+        }
+        assert_eq!(current, SidePanel::Repos);
+    }
+
+    #[test]
+    fn panel_prev_repos_to_stash() {
+        assert_eq!(SidePanel::Repos.prev(), SidePanel::Stash);
     }
 
     #[test]
     fn panel_equality() {
-        assert_eq!(Panel::RepoList, Panel::RepoList);
-        assert_eq!(Panel::Branches, Panel::Branches);
-        assert_eq!(Panel::Files, Panel::Files);
+        assert_eq!(SidePanel::Repos, SidePanel::Repos);
+        assert_eq!(SidePanel::Branches, SidePanel::Branches);
+        assert_eq!(SidePanel::Files, SidePanel::Files);
+        assert_eq!(SidePanel::Commits, SidePanel::Commits);
+        assert_eq!(SidePanel::Stash, SidePanel::Stash);
     }
 
     #[test]
     fn panel_inequality() {
-        assert_ne!(Panel::RepoList, Panel::Branches);
-        assert_ne!(Panel::Branches, Panel::Files);
-        assert_ne!(Panel::Files, Panel::RepoList);
+        assert_ne!(SidePanel::Repos, SidePanel::Branches);
+        assert_ne!(SidePanel::Branches, SidePanel::Files);
+        assert_ne!(SidePanel::Files, SidePanel::Commits);
+        assert_ne!(SidePanel::Commits, SidePanel::Stash);
+        assert_ne!(SidePanel::Stash, SidePanel::Repos);
     }
 
     #[test]
     fn panel_clone_and_copy() {
-        let p = Panel::Branches;
+        let p = SidePanel::Branches;
         let cloned = p;
         let copied = p;
-        assert_eq!(cloned, Panel::Branches);
-        assert_eq!(copied, Panel::Branches);
+        assert_eq!(cloned, SidePanel::Branches);
+        assert_eq!(copied, SidePanel::Branches);
+    }
+
+    #[test]
+    fn panel_from_num() {
+        assert_eq!(SidePanel::from_num('1'), Some(SidePanel::Repos));
+        assert_eq!(SidePanel::from_num('2'), Some(SidePanel::Files));
+        assert_eq!(SidePanel::from_num('3'), Some(SidePanel::Branches));
+        assert_eq!(SidePanel::from_num('4'), Some(SidePanel::Commits));
+        assert_eq!(SidePanel::from_num('5'), Some(SidePanel::Stash));
+        assert_eq!(SidePanel::from_num('0'), None);
+        assert_eq!(SidePanel::from_num('6'), None);
     }
 
     // --- Mode enum tests ---

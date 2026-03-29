@@ -1,13 +1,15 @@
 mod repo_list;
+mod branches;
 mod command_log;
+mod commits;
 mod confirm;
-mod detail;
 mod diff;
 mod files;
-pub mod log_view;
 mod modal;
+mod preview;
+mod stash_panel;
 
-use crate::app::{App, Mode, Panel, Tab};
+use crate::app::{App, Mode, SidePanel};
 use ratatui::Frame;
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
@@ -42,95 +44,118 @@ pub fn render(f: &mut Frame, app: &App) {
 }
 
 fn render_header(f: &mut Frame, app: &App, area: Rect) {
-    let tab_style_active = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
-    let tab_style_inactive = Style::default().fg(Color::DarkGray);
+    let active = Style::default().fg(Color::Black).bg(Color::Cyan).add_modifier(Modifier::BOLD);
+    let inactive = Style::default().fg(Color::DarkGray);
 
-    let mut spans = vec![
-        Span::raw(" "),
-        Span::styled(" 1:Status ", if app.active_tab == Tab::Status { tab_style_active } else { tab_style_inactive }),
-        Span::raw(" "),
-        Span::styled(" 2:Log ", if app.active_tab == Tab::Log { tab_style_active } else { tab_style_inactive }),
-        Span::raw("  "),
-        Span::styled(&app.workspace_name, Style::default().fg(Color::White).add_modifier(Modifier::BOLD)),
-        Span::raw("  "),
-        Span::styled(
-            app.workspace_path.to_string_lossy().to_string(),
-            Style::default().fg(Color::DarkGray),
-        ),
+    let panels = [
+        (" 1 Repos ", SidePanel::Repos),
+        (" 2 Files ", SidePanel::Files),
+        (" 3 Branches ", SidePanel::Branches),
+        (" 4 Commits ", SidePanel::Commits),
+        (" 5 Stash ", SidePanel::Stash),
     ];
-    if let Some(panel) = &app.zoomed_panel {
-        let name = match panel {
-            Panel::RepoList => "Repos",
-            Panel::Branches => "Branches",
-            Panel::Files => "Files",
-        };
-        spans.push(Span::styled(
-            format!("  [ZOOM: {}]", name),
-            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
-        ));
+
+    let mut spans = vec![Span::raw(" ")];
+    for (label, panel) in &panels {
+        let style = if app.active_side == *panel { active } else { inactive };
+        spans.push(Span::styled(*label, style));
+        spans.push(Span::raw("  "));
     }
+
+    spans.push(Span::styled(
+        &app.workspace_name,
+        Style::default().fg(Color::White).add_modifier(Modifier::BOLD),
+    ));
+    spans.push(Span::raw("  "));
+    spans.push(Span::styled(
+        app.workspace_path.to_string_lossy().to_string(),
+        Style::default().fg(Color::DarkGray),
+    ));
+
     f.render_widget(Paragraph::new(Line::from(spans)), area);
 }
 
 fn render_main(f: &mut Frame, app: &App, area: Rect) {
-    match app.active_tab {
-        Tab::Status => render_status_tab(f, app, area),
-        Tab::Log => log_view::render(f, app, area),
-    }
-}
+    let cols = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(35), Constraint::Percentage(65)])
+        .split(area);
 
-fn render_status_tab(f: &mut Frame, app: &App, area: Rect) {
-    match app.zoomed_panel {
-        Some(Panel::RepoList) => {
-            repo_list::render(f, app, area);
-        }
-        Some(Panel::Branches) => {
-            detail::render(f, app, area);
-        }
-        Some(Panel::Files) => {
-            files::render(f, app, area);
-        }
-        None => {
-            let cols = Layout::default()
-                .direction(Direction::Horizontal)
-                .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
-                .split(area);
+    // Left side: 5 vertically stacked panels, each ~20%
+    let left_panels = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+        ])
+        .split(cols[0]);
 
-            repo_list::render(f, app, cols[0]);
+    repo_list::render(f, app, left_panels[0]);
+    files::render(f, app, left_panels[1]);
+    branches::render(f, app, left_panels[2]);
+    commits::render(f, app, left_panels[3]);
+    stash_panel::render(f, app, left_panels[4]);
 
-            let right = Layout::default()
-                .direction(Direction::Vertical)
-                .constraints([Constraint::Percentage(60), Constraint::Percentage(40)])
-                .split(cols[1]);
-
-            detail::render(f, app, right[0]);
-            files::render(f, app, right[1]);
-        }
-    }
+    // Right side: preview panel
+    preview::render(f, app, cols[1]);
 }
 
 fn render_footer(f: &mut Frame, app: &App, area: Rect) {
-    let keys = match app.active_tab {
-        Tab::Status => vec![
+    let keys = match app.active_side {
+        SidePanel::Repos => vec![
             ("j/k", "nav"),
             ("Tab", "panel"),
-            ("Enter", "checkout"),
+            ("1-5", "jump"),
+            ("Enter", "select"),
             ("p", "pull"),
             ("P", "push"),
             ("f", "fetch"),
-            ("s", "stash"),
-            ("d", "diff"),
-            ("/", "filter"),
-            ("`", "cmdlog"),
             ("r", "refresh"),
+            ("`", "cmdlog"),
             ("q", "quit"),
         ],
-        Tab::Log => vec![
+        SidePanel::Files => vec![
             ("j/k", "nav"),
             ("Tab", "panel"),
-            ("d/u", "scroll"),
+            ("1-5", "jump"),
+            ("a", "stage"),
+            ("u", "unstage"),
+            ("x", "discard"),
+            ("d", "diff"),
             ("`", "cmdlog"),
-            ("r", "refresh"),
+            ("q", "quit"),
+        ],
+        SidePanel::Branches => vec![
+            ("j/k", "nav"),
+            ("Tab", "panel"),
+            ("1-5", "jump"),
+            ("Enter", "checkout"),
+            ("n", "new"),
+            ("D", "delete"),
+            ("m", "merge"),
+            ("`", "cmdlog"),
+            ("q", "quit"),
+        ],
+        SidePanel::Commits => vec![
+            ("j/k", "nav"),
+            ("Tab", "panel"),
+            ("1-5", "jump"),
+            ("d/u", "scroll"),
+            ("Enter", "diff"),
+            ("`", "cmdlog"),
+            ("q", "quit"),
+        ],
+        SidePanel::Stash => vec![
+            ("j/k", "nav"),
+            ("Tab", "panel"),
+            ("1-5", "jump"),
+            ("s", "stash"),
+            ("p", "pop"),
+            ("d", "drop"),
+            ("`", "cmdlog"),
             ("q", "quit"),
         ],
     };

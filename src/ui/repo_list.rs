@@ -1,27 +1,14 @@
-use crate::app::{App, Mode, Panel};
+use crate::app::{App, SidePanel};
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
+use ratatui::layout::Rect;
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use ratatui::widgets::{Block, Borders, List, ListItem, ListState, Paragraph};
+use ratatui::widgets::{Block, Borders, List, ListItem, ListState};
 
 pub fn render(f: &mut Frame, app: &App, area: Rect) {
-    let is_focused = app.active_panel == Panel::RepoList;
-    let border_color = if is_focused { Color::Cyan } else { Color::DarkGray };
+    let is_focused = app.active_side == SidePanel::Repos;
+    let border_color = if is_focused { Color::Green } else { Color::DarkGray };
     let hidden = app.config.hidden_repos(&app.workspace_name);
-
-    let show_filter = app.filter_active && app.active_panel == Panel::RepoList;
-    let chunks = if show_filter {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3), Constraint::Length(1)])
-            .split(area)
-    } else {
-        Layout::default()
-            .direction(Direction::Vertical)
-            .constraints([Constraint::Min(3)])
-            .split(area)
-    };
 
     let visible = app.visible_repos();
     let items: Vec<ListItem> = visible
@@ -80,7 +67,7 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
         .collect();
 
     let block = Block::default()
-        .title(" Repos ")
+        .title(" 1 Repos ")
         .borders(Borders::ALL)
         .border_style(Style::default().fg(border_color));
 
@@ -95,19 +82,5 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
 
     let mut state = ListState::default();
     state.select(Some(app.selected_repo));
-    f.render_stateful_widget(list, chunks[0], &mut state);
-
-    // Filter bar
-    if show_filter {
-        let filter = Paragraph::new(Line::from(vec![
-            Span::styled("/", Style::default().fg(Color::Yellow)),
-            Span::styled(&app.filter_text, Style::default().fg(Color::White)),
-            if matches!(app.mode, Mode::Filter) {
-                Span::styled("▎", Style::default().fg(Color::Yellow))
-            } else {
-                Span::raw("")
-            },
-        ]));
-        f.render_widget(filter, chunks[1]);
-    }
+    f.render_stateful_widget(list, area, &mut state);
 }

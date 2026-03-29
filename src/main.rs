@@ -5,7 +5,7 @@ mod highlight;
 mod types;
 mod ui;
 
-use app::{App, Mode, Panel, Tab};
+use app::{App, Mode, SidePanel};
 use clap::Parser;
 use crossterm::{
     event::{self, Event, KeyCode, KeyModifiers, EnableMouseCapture, DisableMouseCapture, MouseEventKind},
@@ -100,83 +100,128 @@ fn run_app(
 }
 
 fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
+    // ── Global keys (work regardless of active panel) ──────────────────
     match key {
-        KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
-        KeyCode::Char('1') => app.switch_tab(Tab::Status),
-        KeyCode::Char('2') => app.switch_tab(Tab::Log),
-        // Log tab has its own navigation
-        _ if app.active_tab == Tab::Log => {
-            handle_log_tab(app, key, modifiers);
+        KeyCode::Char('q') | KeyCode::Esc => {
+            app.should_quit = true;
+            return;
         }
-        KeyCode::Char('j') | KeyCode::Down => app.move_down(),
-        KeyCode::Char('k') | KeyCode::Up => app.move_up(),
-        KeyCode::Char(' ') if app.active_panel == Panel::RepoList => app.toggle_mark_repo(),
-        KeyCode::Char('a') if modifiers.contains(KeyModifiers::CONTROL) => app.mark_all_repos(),
-        KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => app.unmark_all_repos(),
-        KeyCode::Char('z') if modifiers.contains(KeyModifiers::CONTROL) => app.undo(),
-        KeyCode::Tab => app.next_panel(),
-        KeyCode::Enter if app.active_panel == Panel::Files => app.show_file_diff(),
-        KeyCode::Enter => app.checkout_selected(),
-        KeyCode::Char('p') => {
-            if modifiers.contains(KeyModifiers::SHIFT) {
-                app.push();
-            } else {
-                app.pull();
+        KeyCode::Char(n @ '1'..='5') => {
+            if let Some(panel) = SidePanel::from_num(n) {
+                app.active_side = panel;
             }
+            return;
         }
-        KeyCode::Char('P') => app.push(),
-        KeyCode::Char('a') if app.active_panel == Panel::Files => app.stage_selected_file(),
-        KeyCode::Char('u') if app.active_panel == Panel::Files => app.unstage_selected_file(),
-        KeyCode::Char('x') if app.active_panel == Panel::Files => app.discard_selected_file(),
-        KeyCode::Char('f') => app.fetch(),
-        KeyCode::Char('s') => app.stash_toggle(),
-        KeyCode::Char('d') if app.active_panel == Panel::Files => app.show_file_diff(),
-        KeyCode::Char('d') => app.show_diff(),
-        KeyCode::Char('r') => {
-            app.refresh();
-            app.notify("Refreshed".to_string(), false);
+        KeyCode::Tab => {
+            app.active_side = app.active_side.next();
+            return;
         }
-        KeyCode::Char('h') => app.toggle_hide(),
-        KeyCode::Char('H') => app.toggle_show_hidden(),
+        KeyCode::BackTab => {
+            app.active_side = app.active_side.prev();
+            return;
+        }
         KeyCode::Char('/') => {
             app.filter_text.clear();
             app.filter_active = true;
             app.mode = Mode::Filter;
+            return;
         }
-        KeyCode::Char('z') => app.toggle_zoom(),
-        KeyCode::Char('l') => app.show_commit_log(),
-        KeyCode::Char('c') => app.create_commit_prompt(),
-        KeyCode::Char('n') => app.create_branch_prompt(),
-        KeyCode::Char('D') => app.delete_branch(),
-        KeyCode::Char('R') => app.rename_branch_prompt(),
-        KeyCode::Char('m') => app.merge_branch(),
         KeyCode::Char('`') => {
             app.command_log_scroll = 0;
             app.mode = Mode::CommandLog;
+            return;
         }
         KeyCode::Char('w') => {
             app.workspace_selector_index = 0;
             app.mode = Mode::WorkspaceSwitcher;
+            return;
+        }
+        KeyCode::Char('r') => {
+            app.refresh();
+            app.notify("Refreshed".to_string(), false);
+            return;
+        }
+        KeyCode::Char('z') if modifiers.contains(KeyModifiers::CONTROL) => {
+            app.undo();
+            return;
+        }
+        _ => {}
+    }
+
+    // ── Panel-specific keys ────────────────────────────────────────────
+    match app.active_side {
+        SidePanel::Repos => handle_repos_panel(app, key, modifiers),
+        SidePanel::Files => handle_files_panel(app, key, modifiers),
+        SidePanel::Branches => handle_branches_panel(app, key, modifiers),
+        SidePanel::Commits => handle_commits_panel(app, key, modifiers),
+        SidePanel::Stash => handle_stash_panel(app, key, modifiers),
+    }
+}
+
+fn handle_repos_panel(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
+    match key {
+        KeyCode::Char('j') | KeyCode::Down => app.side_move_down(),
+        KeyCode::Char('k') | KeyCode::Up => app.side_move_up(),
+        KeyCode::Char(' ') => app.toggle_mark_repo(),
+        KeyCode::Char('a') if modifiers.contains(KeyModifiers::CONTROL) => app.mark_all_repos(),
+        KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => app.unmark_all_repos(),
+        KeyCode::Char('p') if modifiers.contains(KeyModifiers::SHIFT) => app.push(),
+        KeyCode::Char('P') => app.push(),
+        KeyCode::Char('p') => app.pull(),
+        KeyCode::Char('f') => app.fetch(),
+        KeyCode::Enter => {
+            app.active_side = SidePanel::Files;
         }
         _ => {}
     }
 }
 
-fn handle_log_tab(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) {
+fn handle_files_panel(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) {
     match key {
-        KeyCode::Char('j') | KeyCode::Down => app.log_move_down(),
-        KeyCode::Char('k') | KeyCode::Up => app.log_move_up(),
-        KeyCode::Tab => app.next_log_panel(),
-        KeyCode::Char('d') => app.log_page_down(),
-        KeyCode::Char('u') => app.log_page_up(),
-        KeyCode::Char('r') => {
-            app.load_log();
-            app.notify("Log refreshed".to_string(), false);
+        KeyCode::Char('j') | KeyCode::Down => app.side_move_down(),
+        KeyCode::Char('k') | KeyCode::Up => app.side_move_up(),
+        KeyCode::Char('a') => app.stage_selected_file(),
+        KeyCode::Char('u') => app.unstage_selected_file(),
+        KeyCode::Char('x') => app.discard_selected_file(),
+        KeyCode::Char('c') => app.create_commit_prompt(),
+        KeyCode::Char('d') | KeyCode::Enter => app.show_file_diff(),
+        _ => {}
+    }
+}
+
+fn handle_branches_panel(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) {
+    match key {
+        KeyCode::Char('j') | KeyCode::Down => app.side_move_down(),
+        KeyCode::Char('k') | KeyCode::Up => app.side_move_up(),
+        KeyCode::Enter => app.checkout_selected(),
+        KeyCode::Char('n') => app.create_branch_prompt(),
+        KeyCode::Char('D') => app.delete_branch(),
+        KeyCode::Char('R') => app.rename_branch_prompt(),
+        KeyCode::Char('m') => app.merge_branch(),
+        KeyCode::Char('s') => app.stash_toggle(),
+        _ => {}
+    }
+}
+
+fn handle_commits_panel(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) {
+    match key {
+        KeyCode::Char('j') | KeyCode::Down => app.side_move_down(),
+        KeyCode::Char('k') | KeyCode::Up => app.side_move_up(),
+        KeyCode::Char('d') => {
+            app.preview_scroll = app.preview_scroll.saturating_add(20);
         }
-        KeyCode::Char('`') => {
-            app.command_log_scroll = 0;
-            app.mode = Mode::CommandLog;
+        KeyCode::Char('u') => {
+            app.preview_scroll = app.preview_scroll.saturating_sub(20);
         }
+        _ => {}
+    }
+}
+
+fn handle_stash_panel(app: &mut App, key: KeyCode, _modifiers: KeyModifiers) {
+    match key {
+        KeyCode::Char('j') | KeyCode::Down => app.side_move_down(),
+        KeyCode::Char('k') | KeyCode::Up => app.side_move_up(),
+        KeyCode::Char('s') | KeyCode::Enter => app.stash_toggle(),
         _ => {}
     }
 }
@@ -193,56 +238,86 @@ fn handle_diff_mode(app: &mut App, key: KeyCode) {
 }
 
 fn handle_mouse(app: &mut App, kind: MouseEventKind, col: u16, row: u16, size: Rect) {
-    // Replicate the layout: header(1) + main(rest) + footer(2) + notif(1)
+    // Layout: header(1) + main(rest) + footer(2) + notif(1)
     let header_h = 1;
     let footer_h = 2;
     let notif_h = 1;
     let main_h = size.height.saturating_sub(header_h + footer_h + notif_h);
     let main_top = header_h;
 
-    // Main area: left 30% = repo list, right 70% split into branches(60%) + files(40%)
-    let repo_w = size.width * 30 / 100;
-    let branch_h = main_h * 60 / 100;
+    // Left column holds 5 vertically stacked panels (each ~20% of main height).
+    // Right column is the preview pane.
+    let left_w = size.width * 30 / 100;
 
-    let in_repo = col < repo_w && row >= main_top && row < main_top + main_h;
-    let in_branch = col >= repo_w && row >= main_top && row < main_top + branch_h;
-    let in_files = col >= repo_w && row >= main_top + branch_h && row < main_top + main_h;
+    // Only handle clicks in the left column.
+    if col >= left_w {
+        return;
+    }
+
+    // Determine which of the 5 panels the row falls in.
+    let panel_h = main_h / 5;
+
+    let panel_boundaries: [(u16, SidePanel); 5] = [
+        (main_top, SidePanel::Repos),
+        (main_top + panel_h, SidePanel::Files),
+        (main_top + panel_h * 2, SidePanel::Branches),
+        (main_top + panel_h * 3, SidePanel::Commits),
+        (main_top + panel_h * 4, SidePanel::Stash),
+    ];
+
+    // Find which panel was hit.
+    let hit = panel_boundaries
+        .iter()
+        .rev()
+        .find(|(top, _)| row >= *top && row < main_top + main_h)
+        .map(|(top, panel)| (*top, *panel));
+
+    let Some((panel_top, panel)) = hit else { return };
 
     match kind {
         MouseEventKind::Down(_) => {
-            if in_repo {
-                app.active_panel = Panel::RepoList;
-                // Approximate row -> index (subtract border)
-                let idx = (row - main_top).saturating_sub(1) as usize;
-                if idx < app.repos.len() {
-                    app.selected_repo = idx;
-                    app.selected_branch = 0;
-                    app.ensure_branches_loaded();
-                }
-            } else if in_branch {
-                app.active_panel = Panel::Branches;
-                let idx = (row - main_top).saturating_sub(4) as usize; // 3 for summary + 1 border
-                if let Some(repo) = app.selected_repo()
-                    && idx < repo.branches.len() {
-                        app.selected_branch = idx;
+            app.active_side = panel;
+            // Approximate the clicked item index (subtract 1 for border).
+            let idx = (row.saturating_sub(panel_top)).saturating_sub(1) as usize;
+            match panel {
+                SidePanel::Repos => {
+                    if idx < app.repos.len() {
+                        app.selected_repo = idx;
+                        app.selected_branch = 0;
+                        app.ensure_branches_loaded();
                     }
-            } else if in_files {
-                app.active_panel = Panel::Files;
-                let idx = (row - main_top - branch_h).saturating_sub(1) as usize;
-                if idx < app.files.len() {
-                    app.selected_file = idx;
+                }
+                SidePanel::Files => {
+                    if idx < app.files.len() {
+                        app.selected_file = idx;
+                    }
+                }
+                SidePanel::Branches => {
+                    if let Some(repo) = app.selected_repo() {
+                        if idx < repo.branches.len() {
+                            app.selected_branch = idx;
+                        }
+                    }
+                }
+                SidePanel::Commits => {
+                    if idx < app.commit_log.len() {
+                        app.commit_log_selected = idx;
+                    }
+                }
+                SidePanel::Stash => {
+                    if idx < app.stash_list.len() {
+                        app.selected_stash = idx;
+                    }
                 }
             }
         }
         MouseEventKind::ScrollUp => {
-            if in_repo { app.active_panel = Panel::RepoList; app.move_up(); }
-            else if in_branch { app.active_panel = Panel::Branches; app.move_up(); }
-            else if in_files { app.active_panel = Panel::Files; app.move_up(); }
+            app.active_side = panel;
+            app.side_move_up();
         }
         MouseEventKind::ScrollDown => {
-            if in_repo { app.active_panel = Panel::RepoList; app.move_down(); }
-            else if in_branch { app.active_panel = Panel::Branches; app.move_down(); }
-            else if in_files { app.active_panel = Panel::Files; app.move_down(); }
+            app.active_side = panel;
+            app.side_move_down();
         }
         _ => {}
     }
