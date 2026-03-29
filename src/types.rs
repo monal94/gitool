@@ -78,15 +78,13 @@ mod tests {
 
     #[test]
     fn file_status_all_variants_are_distinct() {
-        let variants = vec![
-            FileStatus::Modified,
+        let variants = [FileStatus::Modified,
             FileStatus::Added,
             FileStatus::Deleted,
             FileStatus::Renamed,
             FileStatus::Untracked,
             FileStatus::Typechange,
-            FileStatus::Conflicted,
-        ];
+            FileStatus::Conflicted];
         for (i, a) in variants.iter().enumerate() {
             for (j, b) in variants.iter().enumerate() {
                 if i == j {

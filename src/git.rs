@@ -887,4 +887,60 @@ mod tests {
         assert_eq!(repos[0].name, "keep");
         let _ = fs::remove_dir_all(&tmp);
     }
+
+    // ---------------------------------------------------------------
+    // git_discard tests
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_discard_removes_untracked_file() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("discard-untracked", &tmp);
+
+        let file = repo_path.join("untracked.txt");
+        fs::write(&file, "temp data").unwrap();
+        assert!(file.exists());
+
+        let result = git_discard(&repo_path, "untracked.txt", true);
+        assert!(result.is_ok());
+        assert!(!file.exists(), "Untracked file should be deleted");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn git_discard_restores_modified_file() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("discard-modified", &tmp);
+
+        // Create and commit a file
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("tracked.txt"), "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("tracked.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add file", &tree, &[&parent]).unwrap();
+
+        // Modify and discard
+        fs::write(repo_path.join("tracked.txt"), "changed").unwrap();
+        let result = git_discard(&repo_path, "tracked.txt", false);
+        assert!(result.is_ok());
+        let content = fs::read_to_string(repo_path.join("tracked.txt")).unwrap();
+        assert_eq!(content, "original");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // stash_count via reflog
+    // ---------------------------------------------------------------
+    #[test]
+    fn stash_count_on_clean_repo_is_zero() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("stash-count", &tmp);
+        let status = scan_repo(&repo_path).unwrap();
+        assert_eq!(status.stash, 0);
+        let _ = fs::remove_dir_all(&tmp);
+    }
 }

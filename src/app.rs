@@ -927,7 +927,7 @@ mod tests {
     #[test]
     fn panel_clone_and_copy() {
         let p = Panel::Branches;
-        let cloned = p.clone();
+        let cloned = p;
         let copied = p;
         assert_eq!(cloned, Panel::Branches);
         assert_eq!(copied, Panel::Branches);
@@ -954,14 +954,12 @@ mod tests {
 
     #[test]
     fn mode_all_simple_variants_distinct() {
-        let variants = vec![
-            Mode::Normal,
+        let variants = [Mode::Normal,
             Mode::WorkspaceSwitcher,
             Mode::DiffView,
             Mode::CommandLog,
             Mode::CommitLog,
-            Mode::Filter,
-        ];
+            Mode::Filter];
         for (i, a) in variants.iter().enumerate() {
             for (j, b) in variants.iter().enumerate() {
                 if i == j {
@@ -1295,5 +1293,36 @@ mod tests {
         assert!(entry.author.is_empty());
         assert!(entry.date.is_empty());
         assert!(entry.message.is_empty());
+    }
+
+    // --- DiscardFile with untracked flag ---
+
+    #[test]
+    fn confirm_action_discard_file_untracked() {
+        let action = ConfirmAction::DiscardFile(
+            PathBuf::from("/repo"),
+            "new_file.txt".to_string(),
+            true,
+        );
+        if let ConfirmAction::DiscardFile(_, _, untracked) = &action {
+            assert!(untracked);
+        } else {
+            panic!("Expected ConfirmAction::DiscardFile");
+        }
+    }
+
+    #[test]
+    fn confirm_action_discard_file_tracked() {
+        let action = ConfirmAction::DiscardFile(
+            PathBuf::from("/repo"),
+            "existing.rs".to_string(),
+            false,
+        );
+        if let ConfirmAction::DiscardFile(_, file, untracked) = &action {
+            assert_eq!(file, "existing.rs");
+            assert!(!untracked);
+        } else {
+            panic!("Expected ConfirmAction::DiscardFile");
+        }
     }
 }
