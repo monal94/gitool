@@ -65,6 +65,7 @@ fn run_app(
                 match &app.mode {
                     Mode::Normal => handle_normal_mode(app, key.code, key.modifiers),
                     Mode::DiffView => handle_diff_mode(app, key.code),
+                    Mode::CommandLog => handle_command_log_mode(app, key.code),
                     Mode::WorkspaceSwitcher => handle_workspace_mode(app, key.code),
                     Mode::Confirm { .. } => handle_confirm_mode(app, key.code),
                     Mode::Filter => handle_filter_mode(app, key.code),
@@ -107,6 +108,10 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             app.filter_active = true;
             app.mode = Mode::Filter;
         }
+        KeyCode::Char('`') => {
+            app.command_log_scroll = 0;
+            app.mode = Mode::CommandLog;
+        }
         KeyCode::Char('w') => {
             app.workspace_selector_index = 0;
             app.mode = Mode::WorkspaceSwitcher;
@@ -122,6 +127,25 @@ fn handle_diff_mode(app: &mut App, key: KeyCode) {
         KeyCode::Char('k') | KeyCode::Up => app.diff_scroll = app.diff_scroll.saturating_sub(1),
         KeyCode::Char('d') => app.diff_scroll = app.diff_scroll.saturating_add(20),
         KeyCode::Char('u') => app.diff_scroll = app.diff_scroll.saturating_sub(20),
+        _ => {}
+    }
+}
+
+fn handle_command_log_mode(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('`') => app.mode = Mode::Normal,
+        KeyCode::Char('j') | KeyCode::Down => {
+            app.command_log_scroll = app.command_log_scroll.saturating_add(1);
+        }
+        KeyCode::Char('k') | KeyCode::Up => {
+            app.command_log_scroll = app.command_log_scroll.saturating_sub(1);
+        }
+        KeyCode::Char('d') => {
+            app.command_log_scroll = app.command_log_scroll.saturating_add(20);
+        }
+        KeyCode::Char('u') => {
+            app.command_log_scroll = app.command_log_scroll.saturating_sub(20);
+        }
         _ => {}
     }
 }

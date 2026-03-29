@@ -17,6 +17,7 @@ pub enum Mode {
     Normal,
     WorkspaceSwitcher,
     DiffView,
+    CommandLog,
     Confirm {
         message: String,
         action: ConfirmAction,
@@ -35,6 +36,15 @@ pub struct Notification {
     pub message: String,
     pub is_error: bool,
     pub created: Instant,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommandLogEntry {
+    pub timestamp: Instant,
+    pub repo_name: String,
+    pub command: String,
+    pub success: bool,
+    pub output: String,
 }
 
 /// Result from a background git operation.
@@ -71,6 +81,8 @@ pub struct App {
     pub pending_ops: HashSet<PathBuf>,
     pub filter_text: String,
     pub filter_active: bool,
+    pub command_log: Vec<CommandLogEntry>,
+    pub command_log_scroll: u16,
     result_rx: Receiver<GitResult>,
     task_tx: Sender<GitResult>,
 }
@@ -110,6 +122,8 @@ impl App {
             pending_ops: HashSet::new(),
             filter_text: String::new(),
             filter_active: false,
+            command_log: Vec::new(),
+            command_log_scroll: 0,
             result_rx,
             task_tx,
         }
@@ -150,6 +164,20 @@ impl App {
             match result {
                 GitResult::Done { repo_path, label, result } => {
                     self.pending_ops.remove(&repo_path);
+                    let repo_name = repo_path
+                        .file_name()
+                        .map(|n| n.to_string_lossy().to_string())
+                        .unwrap_or_default();
+                    self.command_log.push(CommandLogEntry {
+                        timestamp: Instant::now(),
+                        repo_name,
+                        command: label.clone(),
+                        success: result.is_ok(),
+                        output: match &result {
+                            Ok(msg) => msg.trim().to_string(),
+                            Err(e) => e.clone(),
+                        },
+                    });
                     match result {
                         Ok(msg) => {
                             let summary = msg.lines().last().unwrap_or("Done").to_string();

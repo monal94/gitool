@@ -1,4 +1,5 @@
 mod repo_list;
+mod command_log;
 mod confirm;
 mod detail;
 mod diff;
@@ -30,6 +31,7 @@ pub fn render(f: &mut Frame, app: &App) {
     // Overlay modes
     match &app.mode {
         Mode::DiffView => diff::render(f, app),
+        Mode::CommandLog => command_log::render(f, app),
         Mode::WorkspaceSwitcher => modal::render_workspace_switcher(f, app),
         Mode::Confirm { .. } => confirm::render(f, app),
         Mode::Normal | Mode::Filter => {}
@@ -73,6 +75,7 @@ fn render_footer(f: &mut Frame, _app: &App, area: Rect) {
         ("h", "hide"),
         ("H", "show hidden"),
         ("/", "filter"),
+        ("`", "log"),
         ("r", "refresh"),
         ("q", "quit"),
     ];
