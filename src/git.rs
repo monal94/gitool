@@ -438,3 +438,466 @@ fn run_git(path: &Path, args: &[&str]) -> Result<String, String> {
         Err(String::from_utf8_lossy(&output.stderr).trim().to_string())
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::types::FileStatus;
+    use std::fs;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    static TEST_COUNTER: AtomicUsize = AtomicUsize::new(0);
+
+    /// Create a unique temporary directory for each test to avoid collisions.
+    fn tmp_dir() -> PathBuf {
+        let id = TEST_COUNTER.fetch_add(1, Ordering::SeqCst);
+        let dir = std::env::temp_dir()
+            .join(format!("gitool_test_{}_{}", std::process::id(), id));
+        if dir.exists() {
+            fs::remove_dir_all(&dir).unwrap();
+        }
+        fs::create_dir_all(&dir).unwrap();
+        dir
+    }
+
+    /// Helper: create a git repo inside `parent/name` with user config and
+    /// one initial commit so that HEAD exists.
+    fn init_repo_with_commit(name: &str, parent: &Path) -> PathBuf {
+        let repo_path = parent.join(name);
+        fs::create_dir_all(&repo_path).unwrap();
+        let repo = Repository::init(&repo_path).unwrap();
+
+        // Configure user so commits work
+        let mut config = repo.config().unwrap();
+        config.set_str("user.name", "Test User").unwrap();
+        config.set_str("user.email", "test@example.com").unwrap();
+
+        // Create an initial commit (empty tree)
+        let sig = repo.signature().unwrap();
+        let tree_id = repo.index().unwrap().write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Initial commit", &tree, &[])
+            .unwrap();
+
+        repo_path
+    }
+
+    // ---------------------------------------------------------------
+    // 1. scan_workspace on an empty directory -> returns empty vec
+    // ---------------------------------------------------------------
+    #[test]
+    fn scan_workspace_empty_dir_returns_empty() {
+        let tmp = tmp_dir();
+        let repos = scan_workspace(&tmp, &[]);
+        assert!(repos.is_empty(), "Expected no repos in an empty directory");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // 2. scan_workspace on a directory that IS a git repo -> single repo
+    // ---------------------------------------------------------------
+    #[test]
+    fn scan_workspace_on_git_repo_returns_single_repo() {
+        let tmp = tmp_dir();
+        // Init the temp dir itself as a git repo
+        Repository::init(&tmp).unwrap();
+
+        let repos = scan_workspace(&tmp, &[]);
+        assert_eq!(repos.len(), 1, "Expected exactly one repo when path is itself a git repo");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // 3. scan_workspace on a directory containing git repos -> multiple repos
+    // ---------------------------------------------------------------
+    #[test]
+    fn scan_workspace_finds_multiple_repos() {
+        let tmp = tmp_dir();
+
+        init_repo_with_commit("alpha", &tmp);
+        init_repo_with_commit("beta", &tmp);
+        init_repo_with_commit("gamma", &tmp);
+
+        // Also create a plain directory that is NOT a repo
+        fs::create_dir_all(tmp.join("not-a-repo")).unwrap();
+
+        let repos = scan_workspace(&tmp, &[]);
+        assert_eq!(repos.len(), 3, "Expected exactly 3 repos");
+
+        let names: Vec<&str> = repos.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"alpha"));
+        assert!(names.contains(&"beta"));
+        assert!(names.contains(&"gamma"));
+
+        // Verify sorted order
+        assert_eq!(names, vec!["alpha", "beta", "gamma"]);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // 4. scan_workspace respects hidden repos filter
+    // ---------------------------------------------------------------
+    #[test]
+    fn scan_workspace_respects_hidden_filter() {
+        let tmp = tmp_dir();
+
+        init_repo_with_commit("visible", &tmp);
+        init_repo_with_commit("hidden-repo", &tmp);
+        init_repo_with_commit("also-visible", &tmp);
+
+        let hidden = vec!["hidden-repo".to_string()];
+        let repos = scan_workspace(&tmp, &hidden);
+
+        assert_eq!(repos.len(), 2, "Hidden repo should be excluded");
+        let names: Vec<&str> = repos.iter().map(|r| r.name.as_str()).collect();
+        assert!(names.contains(&"visible"));
+        assert!(names.contains(&"also-visible"));
+        assert!(!names.contains(&"hidden-repo"));
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // 5. scan_repo on a valid git repo -> correct name/branch
+    // ---------------------------------------------------------------
+    #[test]
+    fn scan_repo_returns_correct_name_and_branch() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("my-project", &tmp);
+
+        let status = scan_repo(&repo_path).expect("scan_repo should return Some");
+
+        assert_eq!(status.name, "my-project");
+        // Default branch after init + commit is typically "master" or "main"
+        assert!(
+            !status.branch.is_empty(),
+            "Branch name should not be empty"
+        );
+        assert_eq!(status.ahead, 0);
+        assert_eq!(status.behind, 0);
+        assert_eq!(status.dirty, 0);
+        assert_eq!(status.stash, 0);
+        assert!(!status.branches_loaded);
+        assert!(status.branches.is_empty());
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn scan_repo_on_nonexistent_path_returns_none() {
+        let result = scan_repo(Path::new("/nonexistent/path/to/repo"));
+        assert!(result.is_none());
+    }
+
+    // ---------------------------------------------------------------
+    // 6. scan_repo_full -> returns with branches_loaded = true
+    // ---------------------------------------------------------------
+    #[test]
+    fn scan_repo_full_sets_branches_loaded() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("full-scan", &tmp);
+
+        let status = scan_repo_full(&repo_path).expect("scan_repo_full should return Some");
+
+        assert!(status.branches_loaded, "branches_loaded should be true");
+        assert_eq!(status.name, "full-scan");
+        // Should have at least one branch (the current one)
+        assert!(
+            !status.branches.is_empty(),
+            "branches should contain at least the current branch"
+        );
+
+        // The current branch should be marked as is_current
+        let current = status.branches.iter().find(|b| b.is_current);
+        assert!(current.is_some(), "One branch should be marked as current");
+        assert_eq!(current.unwrap().name, status.branch);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // 7. load_branches on a repo -> non-empty list including current
+    // ---------------------------------------------------------------
+    #[test]
+    fn load_branches_returns_current_branch() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("branch-test", &tmp);
+
+        let branches = load_branches(&repo_path);
+        assert!(!branches.is_empty(), "Should have at least one branch");
+
+        let current = branches.iter().find(|b| b.is_current);
+        assert!(current.is_some(), "One branch should be current");
+        assert!(current.unwrap().has_local);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn load_branches_with_multiple_branches() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("multi-branch", &tmp);
+
+        // Create additional branches using git2
+        let repo = Repository::open(&repo_path).unwrap();
+        let head_commit = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.branch("feature-a", &head_commit, false).unwrap();
+        repo.branch("feature-b", &head_commit, false).unwrap();
+
+        let branches = load_branches(&repo_path);
+        assert!(branches.len() >= 3, "Should have at least 3 branches");
+
+        let names: Vec<&str> = branches.iter().map(|b| b.name.as_str()).collect();
+        assert!(names.contains(&"feature-a"));
+        assert!(names.contains(&"feature-b"));
+
+        // Exactly one should be current
+        let current_count = branches.iter().filter(|b| b.is_current).count();
+        assert_eq!(current_count, 1, "Exactly one branch should be current");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn load_branches_on_invalid_path_returns_empty() {
+        let branches = load_branches(Path::new("/nonexistent/repo"));
+        assert!(branches.is_empty());
+    }
+
+    // ---------------------------------------------------------------
+    // 8. get_file_statuses on a clean repo -> returns empty
+    // ---------------------------------------------------------------
+    #[test]
+    fn get_file_statuses_clean_repo_returns_empty() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("clean-repo", &tmp);
+
+        let statuses = get_file_statuses(&repo_path);
+        assert!(
+            statuses.is_empty(),
+            "Clean repo should have no file statuses"
+        );
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // 9. get_file_statuses on a repo with modifications -> correct entries
+    // ---------------------------------------------------------------
+    #[test]
+    fn get_file_statuses_with_untracked_file() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("dirty-repo", &tmp);
+
+        // Create an untracked file
+        fs::write(repo_path.join("new_file.txt"), "hello").unwrap();
+
+        let statuses = get_file_statuses(&repo_path);
+        assert!(!statuses.is_empty(), "Should detect the untracked file");
+
+        let untracked = statuses
+            .iter()
+            .find(|f| f.path == "new_file.txt");
+        assert!(untracked.is_some(), "Should find new_file.txt");
+        assert_eq!(untracked.unwrap().status, FileStatus::Untracked);
+        assert!(!untracked.unwrap().staged);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn get_file_statuses_with_staged_file() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("staged-repo", &tmp);
+
+        // Create and stage a file
+        fs::write(repo_path.join("staged.txt"), "content").unwrap();
+        let repo = Repository::open(&repo_path).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("staged.txt")).unwrap();
+        index.write().unwrap();
+
+        let statuses = get_file_statuses(&repo_path);
+        let staged = statuses
+            .iter()
+            .find(|f| f.path == "staged.txt" && f.staged);
+        assert!(staged.is_some(), "Should find staged.txt as staged");
+        assert_eq!(staged.unwrap().status, FileStatus::Added);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn get_file_statuses_with_modified_file() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("mod-repo", &tmp);
+
+        // Create a tracked file via commit
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("tracked.txt"), "original").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("tracked.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Add tracked file", &tree, &[&parent])
+            .unwrap();
+
+        // Now modify the tracked file (unstaged modification)
+        fs::write(repo_path.join("tracked.txt"), "modified content").unwrap();
+
+        let statuses = get_file_statuses(&repo_path);
+        let modified = statuses
+            .iter()
+            .find(|f| f.path == "tracked.txt" && !f.staged);
+        assert!(modified.is_some(), "Should detect unstaged modification");
+        assert_eq!(modified.unwrap().status, FileStatus::Modified);
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn get_file_statuses_sorts_staged_before_unstaged() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("sort-repo", &tmp);
+
+        // Create a staged file
+        fs::write(repo_path.join("staged.txt"), "staged content").unwrap();
+        let repo = Repository::open(&repo_path).unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("staged.txt")).unwrap();
+        index.write().unwrap();
+
+        // Create an untracked file
+        fs::write(repo_path.join("untracked.txt"), "untracked").unwrap();
+
+        let statuses = get_file_statuses(&repo_path);
+        assert!(statuses.len() >= 2);
+
+        // Find positions
+        let staged_pos = statuses.iter().position(|f| f.staged);
+        let unstaged_pos = statuses.iter().position(|f| !f.staged);
+        if let (Some(s), Some(u)) = (staged_pos, unstaged_pos) {
+            assert!(
+                s < u,
+                "Staged files should come before unstaged files"
+            );
+        }
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    // ---------------------------------------------------------------
+    // 10. git_log on this repo -> non-empty commit list with correct fields
+    // ---------------------------------------------------------------
+    #[test]
+    fn git_log_returns_commits() {
+        // Use the actual gitool repository for this test
+        let repo_path = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        let commits = git_log(repo_path, 10);
+        assert!(!commits.is_empty(), "git_log should return at least one commit");
+
+        let first = &commits[0];
+        assert!(!first.hash.is_empty(), "Commit hash should not be empty");
+        assert!(!first.author.is_empty(), "Author should not be empty");
+        assert!(!first.date.is_empty(), "Date should not be empty");
+        assert!(!first.message.is_empty(), "Message should not be empty");
+    }
+
+    #[test]
+    fn git_log_respects_limit() {
+        let repo_path = Path::new(env!("CARGO_MANIFEST_DIR"));
+
+        let commits = git_log(repo_path, 1);
+        assert_eq!(
+            commits.len(),
+            1,
+            "git_log with limit=1 should return exactly 1 commit"
+        );
+    }
+
+    #[test]
+    fn git_log_on_fresh_repo_with_commits() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("log-repo", &tmp);
+
+        // Add a second commit
+        let repo = Repository::open(&repo_path).unwrap();
+        fs::write(repo_path.join("file.txt"), "data").unwrap();
+        let mut index = repo.index().unwrap();
+        index.add_path(Path::new("file.txt")).unwrap();
+        index.write().unwrap();
+        let tree_id = index.write_tree().unwrap();
+        let tree = repo.find_tree(tree_id).unwrap();
+        let sig = repo.signature().unwrap();
+        let parent = repo.head().unwrap().peel_to_commit().unwrap();
+        repo.commit(Some("HEAD"), &sig, &sig, "Second commit", &tree, &[&parent])
+            .unwrap();
+
+        let commits = git_log(&repo_path, 10);
+        assert_eq!(commits.len(), 2, "Should have exactly 2 commits");
+        assert_eq!(commits[0].message, "Second commit");
+        assert_eq!(commits[1].message, "Initial commit");
+        assert_eq!(commits[0].author, "Test User");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn git_log_on_invalid_path_returns_empty() {
+        let commits = git_log(Path::new("/nonexistent/repo"), 10);
+        assert!(commits.is_empty());
+    }
+
+    // ---------------------------------------------------------------
+    // Additional edge-case tests
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn scan_workspace_ignores_non_repo_subdirs() {
+        let tmp = tmp_dir();
+
+        // One real repo
+        init_repo_with_commit("real-repo", &tmp);
+
+        // A few plain directories
+        fs::create_dir_all(tmp.join("plain-dir")).unwrap();
+        fs::create_dir_all(tmp.join("another-dir")).unwrap();
+
+        // A directory with a .git FILE (not dir) -- should not be detected
+        let fake_git = tmp.join("fake-repo");
+        fs::create_dir_all(&fake_git).unwrap();
+        fs::write(fake_git.join(".git"), "gitdir: /somewhere/else").unwrap();
+
+        let repos = scan_workspace(&tmp, &[]);
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].name, "real-repo");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn scan_repo_dirty_count_reflects_changes() {
+        let tmp = tmp_dir();
+        let repo_path = init_repo_with_commit("dirty-count", &tmp);
+
+        // Clean state
+        let status = scan_repo(&repo_path).unwrap();
+        assert_eq!(status.dirty, 0);
+
+        // Add untracked files
+        fs::write(repo_path.join("a.txt"), "a").unwrap();
+        fs::write(repo_path.join("b.txt"), "b").unwrap();
+
+        let status = scan_repo(&repo_path).unwrap();
+        assert_eq!(status.dirty, 2, "Should count 2 dirty files");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+
+    #[test]
+    fn scan_workspace_hidden_filter_multiple_entries() {
+        let tmp = tmp_dir();
+
+        init_repo_with_commit("keep", &tmp);
+        init_repo_with_commit("hide-a", &tmp);
+        init_repo_with_commit("hide-b", &tmp);
+
+        let hidden = vec!["hide-a".to_string(), "hide-b".to_string()];
+        let repos = scan_workspace(&tmp, &hidden);
+
+        assert_eq!(repos.len(), 1);
+        assert_eq!(repos[0].name, "keep");
+        let _ = fs::remove_dir_all(&tmp);
+    }
+}
