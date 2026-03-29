@@ -114,6 +114,16 @@ pub enum GitResult {
         message: String,
     },
     FileChanged,
+    LogReady {
+        commits: Vec<CommitEntry>,
+    },
+    CommitDetailReady {
+        files: Vec<CommitFileEntry>,
+        diff: String,
+    },
+    CommitFileDiffReady {
+        diff: String,
+    },
 }
 
 pub struct App {
@@ -154,6 +164,7 @@ pub struct App {
     pub commit_diff_scroll: usize,
     pub highlighted_diff: Option<Vec<ratatui::text::Line<'static>>>,
     pub highlighted_commit_diff: Option<Vec<ratatui::text::Line<'static>>>,
+    highlighter: crate::highlight::Highlighter,
     result_rx: Receiver<GitResult>,
     task_tx: Sender<GitResult>,
     _watcher: Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>,
@@ -213,6 +224,7 @@ impl App {
             commit_diff_scroll: 0,
             highlighted_diff: None,
             highlighted_commit_diff: None,
+            highlighter: crate::highlight::Highlighter::new(),
             result_rx,
             task_tx,
             _watcher: None,
@@ -307,8 +319,7 @@ impl App {
                     if content.is_empty() {
                         self.notify("No changes to diff".to_string(), false);
                     } else {
-                        let h = crate::highlight::Highlighter::new();
-                        self.highlighted_diff = Some(h.highlight_diff(&content));
+                        self.highlighted_diff = Some(self.highlighter.highlight_diff(&content));
                         self.diff_content = content;
                         self.diff_scroll = 0;
                         self.mode = Mode::DiffView;
@@ -319,6 +330,36 @@ impl App {
                 }
                 GitResult::FileChanged => {
                     self.refresh();
+                    self.dirty = true;
+                }
+                GitResult::LogReady { commits } => {
+                    self.commit_log = commits;
+                    self.commit_log_selected = 0;
+                    if !self.commit_log.is_empty() {
+                        self.load_commit_detail();
+                    }
+                    self.dirty = true;
+                }
+                GitResult::CommitDetailReady { files, diff } => {
+                    self.commit_files = files;
+                    self.commit_files_selected = 0;
+                    self.commit_diff_preview = diff;
+                    self.commit_diff_scroll = 0;
+                    if !self.commit_diff_preview.is_empty() {
+                        self.highlighted_commit_diff = Some(self.highlighter.highlight_diff(&self.commit_diff_preview));
+                    } else {
+                        self.highlighted_commit_diff = None;
+                    }
+                    self.dirty = true;
+                }
+                GitResult::CommitFileDiffReady { diff } => {
+                    self.commit_diff_preview = diff;
+                    self.commit_diff_scroll = 0;
+                    if !self.commit_diff_preview.is_empty() {
+                        self.highlighted_commit_diff = Some(self.highlighter.highlight_diff(&self.commit_diff_preview));
+                    } else {
+                        self.highlighted_commit_diff = None;
+                    }
                     self.dirty = true;
                 }
             }
@@ -418,57 +459,59 @@ impl App {
         }
     }
 
-    /// Load the commit log for the currently selected repo into the Log tab state.
+    /// Load the commit log for the currently selected repo (async).
     pub fn load_log(&mut self) {
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
-        self.commit_log = git::git_log(&repo.path, 100);
+        let path = repo.path.clone();
+        let tx = self.task_tx.clone();
+        // Reset state immediately for responsive UI
+        self.commit_log.clear();
         self.commit_log_selected = 0;
         self.commit_files.clear();
         self.commit_files_selected = 0;
         self.commit_diff_preview.clear();
+        self.highlighted_commit_diff = None;
         self.commit_diff_scroll = 0;
         self.active_log_panel = LogPanel::Commits;
-        self.load_commit_detail();
+        // Load in background
+        std::thread::spawn(move || {
+            let commits = git::git_log(&path, 200);
+            let _ = tx.send(GitResult::LogReady { commits });
+        });
     }
 
-    /// Load files and diff for the currently selected commit.
+    /// Load files and diff for the currently selected commit (async).
     pub fn load_commit_detail(&mut self) {
         let Some(entry) = self.commit_log.get(self.commit_log_selected) else {
             self.commit_files.clear();
             self.commit_diff_preview.clear();
+            self.highlighted_commit_diff = None;
             return;
         };
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         let hash = entry.hash.clone();
-        let path = &repo.path;
-
-        self.commit_files = git::git_show_files(path, &hash).unwrap_or_default();
-        self.commit_files_selected = 0;
-        self.commit_diff_preview = git::git_diff_commit(path, &hash).unwrap_or_default();
-        self.commit_diff_scroll = 0;
-        self.highlight_commit_diff();
+        let path = repo.path.clone();
+        let tx = self.task_tx.clone();
+        std::thread::spawn(move || {
+            let files = git::git_show_files(&path, &hash).unwrap_or_default();
+            let diff = git::git_diff_commit(&path, &hash).unwrap_or_default();
+            let _ = tx.send(GitResult::CommitDetailReady { files, diff });
+        });
     }
 
-    /// Load per-file diff for the selected file in commit detail.
+    /// Load per-file diff for the selected file in commit detail (async).
     pub fn load_commit_file_diff(&mut self) {
         let Some(file) = self.commit_files.get(self.commit_files_selected) else { return };
         let Some(entry) = self.commit_log.get(self.commit_log_selected) else { return };
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
-
-        self.commit_diff_preview = git::git_diff_commit_file(
-            &repo.path, &entry.hash, &file.path,
-        ).unwrap_or_default();
-        self.commit_diff_scroll = 0;
-        self.highlight_commit_diff();
-    }
-
-    fn highlight_commit_diff(&mut self) {
-        if self.commit_diff_preview.is_empty() {
-            self.highlighted_commit_diff = None;
-        } else {
-            let h = crate::highlight::Highlighter::new();
-            self.highlighted_commit_diff = Some(h.highlight_diff(&self.commit_diff_preview));
-        }
+        let path = repo.path.clone();
+        let hash = entry.hash.clone();
+        let file_path = file.path.clone();
+        let tx = self.task_tx.clone();
+        std::thread::spawn(move || {
+            let diff = git::git_diff_commit_file(&path, &hash, &file_path).unwrap_or_default();
+            let _ = tx.send(GitResult::CommitFileDiffReady { diff });
+        });
     }
 
     pub fn next_log_panel(&mut self) {

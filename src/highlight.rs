@@ -57,7 +57,7 @@ impl Highlighter {
                     ("-", rest, Color::Red)
                 } else {
                     // Context line — highlight normally
-                    let spans = syntect_to_spans(&mut highlighter, line);
+                    let spans = syntect_to_spans(&mut highlighter, line, &self.ps);
                     if spans.is_empty() {
                         return Line::from(Span::styled(
                             line.to_string(),
@@ -68,7 +68,7 @@ impl Highlighter {
                 };
 
                 // Highlight the code portion
-                let code_spans = syntect_to_spans(&mut highlighter, code);
+                let code_spans = syntect_to_spans(&mut highlighter, code, &self.ps);
 
                 let mut spans = vec![Span::styled(
                     marker.to_string(),
@@ -108,8 +108,8 @@ fn make_header_line(line: &str) -> Line<'static> {
 }
 
 /// Convert syntect highlighted ranges to ratatui Spans.
-fn syntect_to_spans<'a>(h: &mut HighlightLines, line: &str) -> Vec<Span<'a>> {
-    let ranges = h.highlight_line(line, &SyntaxSet::load_defaults_newlines());
+fn syntect_to_spans<'a>(h: &mut HighlightLines, line: &str, ps: &SyntaxSet) -> Vec<Span<'a>> {
+    let ranges = h.highlight_line(line, ps);
     let Ok(ranges) = ranges else { return Vec::new() };
 
     ranges
