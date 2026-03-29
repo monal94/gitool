@@ -35,6 +35,7 @@ pub fn render(f: &mut Frame, app: &App) {
         Mode::CommandLog => command_log::render(f, app),
         Mode::WorkspaceSwitcher => modal::render_workspace_switcher(f, app),
         Mode::Confirm { .. } => confirm::render(f, app),
+        Mode::TextInput { .. } => render_text_input(f, app),
         Mode::Normal | Mode::Filter => {}
     }
 }
@@ -101,6 +102,42 @@ fn render_footer(f: &mut Frame, _app: &App, area: Rect) {
     let footer = Paragraph::new(Line::from(spans))
         .block(Block::default().borders(Borders::TOP).border_style(Style::default().fg(Color::DarkGray)));
     f.render_widget(footer, area);
+}
+
+fn render_text_input(f: &mut Frame, app: &App) {
+    if let Mode::TextInput { prompt, input, .. } = &app.mode {
+        let area = centered_rect(50, 15, f.area());
+        let block = Block::default()
+            .title(" Input ")
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Cyan));
+        let text = Line::from(vec![
+            Span::styled(prompt, Style::default().fg(Color::White)),
+            Span::styled(input, Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)),
+            Span::styled("▎", Style::default().fg(Color::Yellow)),
+        ]);
+        f.render_widget(ratatui::widgets::Clear, area);
+        f.render_widget(Paragraph::new(text).block(block), area);
+    }
+}
+
+fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+    let vertical = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(area);
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(vertical[1])[1]
 }
 
 fn render_notification(f: &mut Frame, app: &App, area: Rect) {

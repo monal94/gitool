@@ -324,6 +324,22 @@ pub fn git_discard(path: &Path, file: &str) -> Result<String, String> {
     run_git(path, &["checkout", "--", file])
 }
 
+pub fn git_create_branch(path: &Path, name: &str) -> Result<String, String> {
+    run_git(path, &["checkout", "-b", name])
+}
+
+pub fn git_delete_branch(path: &Path, name: &str) -> Result<String, String> {
+    run_git(path, &["branch", "-d", name])
+}
+
+pub fn git_rename_branch(path: &Path, old: &str, new: &str) -> Result<String, String> {
+    run_git(path, &["branch", "-m", old, new])
+}
+
+pub fn git_merge(path: &Path, branch: &str) -> Result<String, String> {
+    run_git(path, &["merge", branch])
+}
+
 // Git mutation operations — shell out to git CLI
 
 pub fn git_pull(path: &Path) -> Result<String, String> {

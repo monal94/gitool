@@ -72,6 +72,7 @@ fn run_app(
                     Mode::CommandLog => handle_command_log_mode(app, key.code),
                     Mode::WorkspaceSwitcher => handle_workspace_mode(app, key.code),
                     Mode::Confirm { .. } => handle_confirm_mode(app, key.code),
+                    Mode::TextInput { .. } => handle_text_input_mode(app, key.code),
                     Mode::Filter => handle_filter_mode(app, key.code),
                 }
                 app.mark_dirty();
@@ -119,6 +120,10 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             app.filter_active = true;
             app.mode = Mode::Filter;
         }
+        KeyCode::Char('n') => app.create_branch_prompt(),
+        KeyCode::Char('D') => app.delete_branch(),
+        KeyCode::Char('R') => app.rename_branch_prompt(),
+        KeyCode::Char('m') => app.merge_branch(),
         KeyCode::Char('`') => {
             app.command_log_scroll = 0;
             app.mode = Mode::CommandLog;
@@ -189,6 +194,27 @@ fn handle_confirm_mode(app: &mut App, key: KeyCode) {
     match key {
         KeyCode::Char('y') | KeyCode::Char('Y') => app.execute_confirm(),
         KeyCode::Char('n') | KeyCode::Char('N') | KeyCode::Esc => app.cancel_confirm(),
+        _ => {}
+    }
+}
+
+fn handle_text_input_mode(app: &mut App, key: KeyCode) {
+    match key {
+        KeyCode::Esc => {
+            app.mode = Mode::Normal;
+            app.notify("Cancelled".to_string(), false);
+        }
+        KeyCode::Enter => app.execute_text_input(),
+        KeyCode::Backspace => {
+            if let Mode::TextInput { ref mut input, .. } = app.mode {
+                input.pop();
+            }
+        }
+        KeyCode::Char(c) => {
+            if let Mode::TextInput { ref mut input, .. } = app.mode {
+                input.push(c);
+            }
+        }
         _ => {}
     }
 }
