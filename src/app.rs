@@ -116,6 +116,9 @@ pub enum GitResult {
     FileChanged {
         repo_path: Option<PathBuf>,
     },
+    WorkspaceReady {
+        all_repos: Vec<RepoStatus>,
+    },
     LogReady {
         commits: Vec<CommitEntry>,
     },
@@ -334,6 +337,10 @@ impl App {
                 GitResult::DiffError { message } => {
                     self.notify(format!("Diff failed: {}", message), true);
                 }
+                GitResult::WorkspaceReady { all_repos } => {
+                    self.apply_workspace_ready(all_repos);
+                    self.dirty = true;
+                }
                 GitResult::FileChanged { repo_path } => {
                     if let Some(repo_path) = repo_path {
                         // Selective refresh: only rescan the changed repo
@@ -407,7 +414,7 @@ impl App {
         self.notify(format!("{}...", label), false);
         let tx = self.task_tx.clone();
         let label = label.to_string();
-        std::thread::spawn(move || {
+        rayon::spawn(move || {
             let result = op(&path);
             let _ = tx.send(GitResult::Done {
                 repo_path: path,
@@ -418,12 +425,22 @@ impl App {
     }
 
     pub fn refresh(&mut self) {
+        let workspace_path = self.workspace_path.clone();
+        let tx = self.task_tx.clone();
+        self.invalidate_repo_cache();
+        rayon::spawn(move || {
+            let all_repos = git::scan_workspace(&workspace_path, &[]);
+            let _ = tx.send(GitResult::WorkspaceReady { all_repos });
+        });
+    }
+
+    fn apply_workspace_ready(&mut self, all_repos: Vec<RepoStatus>) {
         let hidden = if self.show_hidden {
             vec![]
         } else {
             self.config.hidden_repos(&self.workspace_name)
         };
-        self.all_repos = git::scan_workspace(&self.workspace_path, &[]);
+        self.all_repos = all_repos;
         self.repos = self
             .all_repos
             .iter()
@@ -502,7 +519,7 @@ impl App {
         self.commit_diff_scroll = 0;
         self.active_log_panel = LogPanel::Commits;
         // Load in background
-        std::thread::spawn(move || {
+        rayon::spawn(move || {
             let commits = git::git_log(&path, 200);
             let _ = tx.send(GitResult::LogReady { commits });
         });
@@ -520,7 +537,7 @@ impl App {
         let hash = entry.hash.clone();
         let path = repo.path.clone();
         let tx = self.task_tx.clone();
-        std::thread::spawn(move || {
+        rayon::spawn(move || {
             let files = git::git_show_files(&path, &hash).unwrap_or_default();
             let diff = git::git_diff_commit(&path, &hash).unwrap_or_default();
             let _ = tx.send(GitResult::CommitDetailReady { files, diff });
@@ -536,7 +553,7 @@ impl App {
         let hash = entry.hash.clone();
         let file_path = file.path.clone();
         let tx = self.task_tx.clone();
-        std::thread::spawn(move || {
+        rayon::spawn(move || {
             let diff = git::git_diff_commit_file(&path, &hash, &file_path).unwrap_or_default();
             let _ = tx.send(GitResult::CommitFileDiffReady { diff });
         });
@@ -883,7 +900,7 @@ impl App {
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         let path = repo.path.clone();
         let tx = self.task_tx.clone();
-        std::thread::spawn(move || {
+        rayon::spawn(move || {
             match git::git_diff(&path) {
                 Ok(content) => { let _ = tx.send(GitResult::DiffReady { content }); }
                 Err(e) => { let _ = tx.send(GitResult::DiffError { message: e }); }
@@ -898,7 +915,7 @@ impl App {
         let file_path = file.path.clone();
         let staged = file.staged;
         let tx = self.task_tx.clone();
-        std::thread::spawn(move || {
+        rayon::spawn(move || {
             match git::git_diff_file(&path, &file_path, staged) {
                 Ok(content) => { let _ = tx.send(GitResult::DiffReady { content }); }
                 Err(e) => { let _ = tx.send(GitResult::DiffError { message: e }); }
