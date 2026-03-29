@@ -113,13 +113,12 @@ impl Highlighter {
             .enumerate()
             .map(|(i, line)| {
                 // Track syntax changes even for lines before the window
-                if line.starts_with("diff --git") {
-                    if let Some(ext) = extract_extension(line)
+                if line.starts_with("diff --git")
+                    && let Some(ext) = extract_extension(line)
                         && let Some(syntax) = self.ps.find_syntax_by_extension(&ext) {
                             current_syntax = syntax;
                             highlighter = HighlightLines::new(current_syntax, theme);
                         }
-                }
 
                 // Only fully process lines in the visible window
                 if i < start || i >= end {

@@ -142,15 +142,12 @@ fn dirty_count(repo: &Repository) -> usize {
 /// Detect the default branch name (main, master, develop, etc.)
 fn detect_default_branch(repo: &Repository) -> String {
     // 1. Check origin/HEAD symbolic ref
-    if let Ok(reference) = repo.find_reference("refs/remotes/origin/HEAD") {
-        if let Ok(resolved) = reference.resolve() {
-            if let Some(name) = resolved.shorthand() {
-                if let Some(branch) = name.strip_prefix("origin/") {
+    if let Ok(reference) = repo.find_reference("refs/remotes/origin/HEAD")
+        && let Ok(resolved) = reference.resolve()
+            && let Some(name) = resolved.shorthand()
+                && let Some(branch) = name.strip_prefix("origin/") {
                     return branch.to_string();
                 }
-            }
-        }
-    }
     // 2. Fallback: try common names
     for name in &["main", "master", "develop"] {
         if repo.find_branch(name, BranchType::Local).is_ok()
