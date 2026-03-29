@@ -89,6 +89,9 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('q') | KeyCode::Esc => app.should_quit = true,
         KeyCode::Char('j') | KeyCode::Down => app.move_down(),
         KeyCode::Char('k') | KeyCode::Up => app.move_up(),
+        KeyCode::Char(' ') if app.active_panel == Panel::RepoList => app.toggle_mark_repo(),
+        KeyCode::Char('a') if modifiers.contains(KeyModifiers::CONTROL) => app.mark_all_repos(),
+        KeyCode::Char('d') if modifiers.contains(KeyModifiers::CONTROL) => app.unmark_all_repos(),
         KeyCode::Tab => app.next_panel(),
         KeyCode::Enter => app.checkout_selected(),
         KeyCode::Char('p') => {

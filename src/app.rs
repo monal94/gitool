@@ -29,6 +29,7 @@ pub enum Mode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConfirmAction {
     Push(PathBuf),
+    BulkPush(Vec<PathBuf>),
     StashPop(PathBuf),
     DiscardFile(PathBuf, String),
 }
@@ -81,6 +82,7 @@ pub struct App {
     pub workspace_selector_index: usize,
     pub should_quit: bool,
     pub pending_ops: HashSet<PathBuf>,
+    pub marked_repos: HashSet<usize>,
     pub filter_text: String,
     pub filter_active: bool,
     pub files: Vec<FileEntry>,
@@ -125,6 +127,7 @@ impl App {
             workspace_selector_index: 0,
             should_quit: false,
             pending_ops: HashSet::new(),
+            marked_repos: HashSet::new(),
             filter_text: String::new(),
             filter_active: false,
             files: Vec::new(),
@@ -381,26 +384,69 @@ impl App {
         };
     }
 
+    // Bulk selection
+
+    pub fn toggle_mark_repo(&mut self) {
+        if self.marked_repos.contains(&self.selected_repo) {
+            self.marked_repos.remove(&self.selected_repo);
+        } else {
+            self.marked_repos.insert(self.selected_repo);
+        }
+    }
+
+    pub fn mark_all_repos(&mut self) {
+        for i in 0..self.repos.len() {
+            self.marked_repos.insert(i);
+        }
+    }
+
+    pub fn unmark_all_repos(&mut self) {
+        self.marked_repos.clear();
+    }
+
+    fn bulk_targets(&self) -> Vec<PathBuf> {
+        if self.marked_repos.is_empty() {
+            // No marks: operate on selected repo only
+            self.repos.get(self.selected_repo)
+                .map(|r| vec![r.path.clone()])
+                .unwrap_or_default()
+        } else {
+            self.marked_repos.iter()
+                .filter_map(|&i| self.repos.get(i).map(|r| r.path.clone()))
+                .collect()
+        }
+    }
+
     // Git actions — all non-blocking via dispatch
 
     pub fn pull(&mut self) {
-        let Some(repo) = self.repos.get(self.selected_repo) else { return };
-        let path = repo.path.clone();
-        self.dispatch(path, "Pull", |p| git::git_pull(p));
+        let targets = self.bulk_targets();
+        for path in targets {
+            self.dispatch(path, "Pull", |p| git::git_pull(p));
+        }
     }
 
     pub fn push(&mut self) {
-        let Some(repo) = self.repos.get(self.selected_repo) else { return };
-        self.mode = Mode::Confirm {
-            message: format!("Push {} ({})? [y/n]", repo.name, repo.branch),
-            action: ConfirmAction::Push(repo.path.clone()),
-        };
+        let targets = self.bulk_targets();
+        if targets.len() > 1 {
+            let count = targets.len();
+            self.mode = Mode::Confirm {
+                message: format!("Push {} repos? [y/n]", count),
+                action: ConfirmAction::BulkPush(targets),
+            };
+        } else if let Some(repo) = self.repos.get(self.selected_repo) {
+            self.mode = Mode::Confirm {
+                message: format!("Push {} ({})? [y/n]", repo.name, repo.branch),
+                action: ConfirmAction::Push(repo.path.clone()),
+            };
+        }
     }
 
     pub fn fetch(&mut self) {
-        let Some(repo) = self.repos.get(self.selected_repo) else { return };
-        let path = repo.path.clone();
-        self.dispatch(path, "Fetch", |p| git::git_fetch(p));
+        let targets = self.bulk_targets();
+        for path in targets {
+            self.dispatch(path, "Fetch", |p| git::git_fetch(p));
+        }
     }
 
     pub fn stash_toggle(&mut self) {
@@ -547,6 +593,11 @@ impl App {
             match action {
                 ConfirmAction::Push(path) => {
                     self.dispatch(path, "Push", |p| git::git_push(p));
+                }
+                ConfirmAction::BulkPush(paths) => {
+                    for path in paths {
+                        self.dispatch(path, "Push", |p| git::git_push(p));
+                    }
                 }
                 ConfirmAction::StashPop(path) => {
                     self.dispatch(path, "Stash pop", |p| git::git_stash_pop(p));

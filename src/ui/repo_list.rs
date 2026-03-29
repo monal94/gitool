@@ -26,8 +26,10 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
     let visible = app.visible_repos();
     let items: Vec<ListItem> = visible
         .iter()
-        .map(|repo| {
+        .enumerate()
+        .map(|(idx, repo)| {
             let is_hidden = hidden.contains(&repo.name);
+            let is_marked = app.marked_repos.contains(&idx);
             let mut glyphs = Vec::new();
 
             if app.is_repo_busy(&repo.path) {
@@ -66,7 +68,12 @@ pub fn render(f: &mut Frame, app: &App, area: Rect) {
                 Style::default().fg(Color::White)
             };
 
-            let mut spans = vec![Span::styled(format!(" {:<14}", repo.name), name_style)];
+            let mark = if is_marked {
+                Span::styled("✓ ", Style::default().fg(Color::Green))
+            } else {
+                Span::raw("  ")
+            };
+            let mut spans = vec![mark, Span::styled(format!("{:<14}", repo.name), name_style)];
             spans.extend(glyphs);
 
             ListItem::new(Line::from(spans))
