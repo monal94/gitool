@@ -1,6 +1,5 @@
 mod repo_list;
 mod command_log;
-mod commit_log;
 mod confirm;
 mod detail;
 mod diff;
@@ -35,7 +34,6 @@ pub fn render(f: &mut Frame, app: &App) {
     match &app.mode {
         Mode::DiffView => diff::render(f, app),
         Mode::CommandLog => command_log::render(f, app),
-        Mode::CommitLog => commit_log::render(f, app),
         Mode::WorkspaceSwitcher => modal::render_workspace_switcher(f, app),
         Mode::Confirm { .. } => confirm::render(f, app),
         Mode::TextInput { .. } => render_text_input(f, app),

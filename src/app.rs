@@ -33,7 +33,6 @@ pub enum Mode {
     WorkspaceSwitcher,
     DiffView,
     CommandLog,
-    CommitLog,
     Confirm {
         message: String,
         action: ConfirmAction,
@@ -149,7 +148,6 @@ pub struct App {
     pub files: Vec<FileEntry>,
     pub selected_file: usize,
     pub commit_log: Vec<CommitEntry>,
-    pub commit_log_scroll: u16,
     pub command_log: Vec<CommandLogEntry>,
     pub command_log_scroll: u16,
     pub dirty: bool,
@@ -209,7 +207,6 @@ impl App {
             files: Vec::new(),
             selected_file: 0,
             commit_log: Vec::new(),
-            commit_log_scroll: 0,
             command_log: Vec::new(),
             command_log_scroll: 0,
             dirty: true,
@@ -852,12 +849,9 @@ impl App {
         }
         let path = repo.path.clone();
         let file_path = file.path.clone();
-        match git::git_stage(&path, &file_path) {
-            Ok(_) => self.notify(format!("Staged: {}", file_path), false),
-            Err(e) => self.notify(format!("Stage failed: {}", e), true),
-        }
-        self.reload_files();
-        self.rescan_selected_repo();
+        self.dispatch(path, &format!("Stage {}", file_path), move |p| {
+            git::git_stage(p, &file_path)
+        });
     }
 
     pub fn unstage_selected_file(&mut self) {
@@ -869,12 +863,9 @@ impl App {
         }
         let path = repo.path.clone();
         let file_path = file.path.clone();
-        match git::git_unstage(&path, &file_path) {
-            Ok(_) => self.notify(format!("Unstaged: {}", file_path), false),
-            Err(e) => self.notify(format!("Unstage failed: {}", e), true),
-        }
-        self.reload_files();
-        self.rescan_selected_repo();
+        self.dispatch(path, &format!("Unstage {}", file_path), move |p| {
+            git::git_unstage(p, &file_path)
+        });
     }
 
     pub fn discard_selected_file(&mut self) {
@@ -909,14 +900,7 @@ impl App {
     }
 
     pub fn show_commit_log(&mut self) {
-        let Some(repo) = self.repos.get(self.selected_repo) else { return };
-        self.commit_log = git::git_log(&repo.path, 50);
-        self.commit_log_scroll = 0;
-        if self.commit_log.is_empty() {
-            self.notify("No commits found".to_string(), false);
-        } else {
-            self.mode = Mode::CommitLog;
-        }
+        self.switch_tab(Tab::Log);
     }
 
     pub fn create_commit_prompt(&mut self) {
@@ -1159,7 +1143,6 @@ mod tests {
         assert_ne!(Mode::Normal, Mode::Filter);
         assert_ne!(Mode::Normal, Mode::DiffView);
         assert_ne!(Mode::Normal, Mode::CommandLog);
-        assert_ne!(Mode::Normal, Mode::CommitLog);
         assert_ne!(Mode::Normal, Mode::WorkspaceSwitcher);
     }
 
@@ -1176,7 +1159,6 @@ mod tests {
             Mode::WorkspaceSwitcher,
             Mode::DiffView,
             Mode::CommandLog,
-            Mode::CommitLog,
             Mode::Filter];
         for (i, a) in variants.iter().enumerate() {
             for (j, b) in variants.iter().enumerate() {

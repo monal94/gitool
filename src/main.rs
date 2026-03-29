@@ -73,7 +73,6 @@ fn run_app(
                         Mode::Normal => handle_normal_mode(app, key.code, key.modifiers),
                         Mode::DiffView => handle_diff_mode(app, key.code),
                         Mode::CommandLog => handle_command_log_mode(app, key.code),
-                        Mode::CommitLog => handle_commit_log_mode(app, key.code),
                         Mode::WorkspaceSwitcher => handle_workspace_mode(app, key.code),
                         Mode::Confirm { .. } => handle_confirm_mode(app, key.code),
                         Mode::TextInput { .. } => handle_text_input_mode(app, key.code),
@@ -244,25 +243,6 @@ fn handle_mouse(app: &mut App, kind: MouseEventKind, col: u16, row: u16, size: R
             if in_repo { app.active_panel = Panel::RepoList; app.move_down(); }
             else if in_branch { app.active_panel = Panel::Branches; app.move_down(); }
             else if in_files { app.active_panel = Panel::Files; app.move_down(); }
-        }
-        _ => {}
-    }
-}
-
-fn handle_commit_log_mode(app: &mut App, key: KeyCode) {
-    match key {
-        KeyCode::Esc | KeyCode::Char('q') | KeyCode::Char('l') => app.mode = Mode::Normal,
-        KeyCode::Char('j') | KeyCode::Down => {
-            app.commit_log_scroll = app.commit_log_scroll.saturating_add(1);
-        }
-        KeyCode::Char('k') | KeyCode::Up => {
-            app.commit_log_scroll = app.commit_log_scroll.saturating_sub(1);
-        }
-        KeyCode::Char('d') => {
-            app.commit_log_scroll = app.commit_log_scroll.saturating_add(20);
-        }
-        KeyCode::Char('u') => {
-            app.commit_log_scroll = app.commit_log_scroll.saturating_sub(20);
         }
         _ => {}
     }
