@@ -7,11 +7,12 @@ mod ui;
 use app::{App, Mode, Panel};
 use clap::Parser;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyModifiers},
+    event::{self, Event, KeyCode, KeyModifiers, EnableMouseCapture, DisableMouseCapture, MouseEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::backend::CrosstermBackend;
+use ratatui::layout::Rect;
 use ratatui::Terminal;
 use std::io;
 use std::path::PathBuf;
@@ -32,7 +33,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Terminal setup
     enable_raw_mode()?;
     let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
+    execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -41,7 +42,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Terminal cleanup
     disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
+    execute!(terminal.backend_mut(), DisableMouseCapture, LeaveAlternateScreen)?;
     terminal.show_cursor()?;
 
     if let Err(e) = result {
@@ -65,18 +66,29 @@ fn run_app(
         }
 
         if event::poll(Duration::from_millis(100))? {
-            if let Event::Key(key) = event::read()? {
-                match &app.mode {
-                    Mode::Normal => handle_normal_mode(app, key.code, key.modifiers),
-                    Mode::DiffView => handle_diff_mode(app, key.code),
-                    Mode::CommandLog => handle_command_log_mode(app, key.code),
-                    Mode::CommitLog => handle_commit_log_mode(app, key.code),
-                    Mode::WorkspaceSwitcher => handle_workspace_mode(app, key.code),
-                    Mode::Confirm { .. } => handle_confirm_mode(app, key.code),
-                    Mode::TextInput { .. } => handle_text_input_mode(app, key.code),
-                    Mode::Filter => handle_filter_mode(app, key.code),
+            match event::read()? {
+                Event::Key(key) => {
+                    match &app.mode {
+                        Mode::Normal => handle_normal_mode(app, key.code, key.modifiers),
+                        Mode::DiffView => handle_diff_mode(app, key.code),
+                        Mode::CommandLog => handle_command_log_mode(app, key.code),
+                        Mode::CommitLog => handle_commit_log_mode(app, key.code),
+                        Mode::WorkspaceSwitcher => handle_workspace_mode(app, key.code),
+                        Mode::Confirm { .. } => handle_confirm_mode(app, key.code),
+                        Mode::TextInput { .. } => handle_text_input_mode(app, key.code),
+                        Mode::Filter => handle_filter_mode(app, key.code),
+                    }
+                    app.mark_dirty();
                 }
-                app.mark_dirty();
+                Event::Mouse(mouse) => {
+                    if matches!(app.mode, Mode::Normal) {
+                        let size = terminal.size()?;
+                        let area = Rect::new(0, 0, size.width, size.height);
+                        handle_mouse(app, mouse.kind, mouse.column, mouse.row, area);
+                        app.mark_dirty();
+                    }
+                }
+                _ => {}
             }
         }
 
@@ -146,6 +158,63 @@ fn handle_diff_mode(app: &mut App, key: KeyCode) {
         KeyCode::Char('k') | KeyCode::Up => app.diff_scroll = app.diff_scroll.saturating_sub(1),
         KeyCode::Char('d') => app.diff_scroll = app.diff_scroll.saturating_add(20),
         KeyCode::Char('u') => app.diff_scroll = app.diff_scroll.saturating_sub(20),
+        _ => {}
+    }
+}
+
+fn handle_mouse(app: &mut App, kind: MouseEventKind, col: u16, row: u16, size: Rect) {
+    // Replicate the layout: header(1) + main(rest) + footer(2) + notif(1)
+    let header_h = 1;
+    let footer_h = 2;
+    let notif_h = 1;
+    let main_h = size.height.saturating_sub(header_h + footer_h + notif_h);
+    let main_top = header_h;
+
+    // Main area: left 30% = repo list, right 70% split into branches(60%) + files(40%)
+    let repo_w = size.width * 30 / 100;
+    let branch_h = main_h * 60 / 100;
+
+    let in_repo = col < repo_w && row >= main_top && row < main_top + main_h;
+    let in_branch = col >= repo_w && row >= main_top && row < main_top + branch_h;
+    let in_files = col >= repo_w && row >= main_top + branch_h && row < main_top + main_h;
+
+    match kind {
+        MouseEventKind::Down(_) => {
+            if in_repo {
+                app.active_panel = Panel::RepoList;
+                // Approximate row -> index (subtract border)
+                let idx = (row - main_top).saturating_sub(1) as usize;
+                if idx < app.repos.len() {
+                    app.selected_repo = idx;
+                    app.selected_branch = 0;
+                    app.ensure_branches_loaded();
+                }
+            } else if in_branch {
+                app.active_panel = Panel::Branches;
+                let idx = (row - main_top).saturating_sub(4) as usize; // 3 for summary + 1 border
+                if let Some(repo) = app.selected_repo() {
+                    if idx < repo.branches.len() {
+                        app.selected_branch = idx;
+                    }
+                }
+            } else if in_files {
+                app.active_panel = Panel::Files;
+                let idx = (row - main_top - branch_h).saturating_sub(1) as usize;
+                if idx < app.files.len() {
+                    app.selected_file = idx;
+                }
+            }
+        }
+        MouseEventKind::ScrollUp => {
+            if in_repo { app.active_panel = Panel::RepoList; app.move_up(); }
+            else if in_branch { app.active_panel = Panel::Branches; app.move_up(); }
+            else if in_files { app.active_panel = Panel::Files; app.move_up(); }
+        }
+        MouseEventKind::ScrollDown => {
+            if in_repo { app.active_panel = Panel::RepoList; app.move_down(); }
+            else if in_branch { app.active_panel = Panel::Branches; app.move_down(); }
+            else if in_files { app.active_panel = Panel::Files; app.move_down(); }
+        }
         _ => {}
     }
 }
