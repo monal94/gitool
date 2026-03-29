@@ -179,6 +179,9 @@ pub enum GitResult {
         files: Vec<CommitFileEntry>,
         diff: String,
     },
+    PreviewReady {
+        content: String,
+    },
     #[allow(dead_code)]
     CommitFileDiffReady {
         diff: String,
@@ -492,6 +495,11 @@ impl App {
                 }
                 GitResult::CommitFileDiffReady { diff } => {
                     self.preview_content = diff;
+                    self.preview_scroll = 0;
+                    self.dirty = true;
+                }
+                GitResult::PreviewReady { content } => {
+                    self.preview_content = content;
                     self.preview_scroll = 0;
                     self.dirty = true;
                 }

@@ -65,11 +65,72 @@ impl App {
     /// Alias for `move_up` — used by key handlers.
     pub fn side_move_up(&mut self) {
         self.move_up();
+        self.load_preview();
     }
 
     /// Alias for `move_down` — used by key handlers.
     pub fn side_move_down(&mut self) {
         self.move_down();
+        self.load_preview();
+    }
+
+    /// Load preview content for the right panel based on the active side panel and selection.
+    pub fn load_preview(&mut self) {
+        match self.active_side {
+            SidePanel::Repos => {
+                // Preview shows repo info — rendered directly from repo data, no async needed
+                self.preview_content.clear();
+            }
+            SidePanel::Files => {
+                // Load diff for selected file
+                let Some(repo) = self.repos.get(self.selected_repo) else { return };
+                let Some(file) = self.files.get(self.selected_file) else {
+                    self.preview_content.clear();
+                    return;
+                };
+                let path = repo.path.clone();
+                let file_path = file.path.clone();
+                let staged = file.staged;
+                let tx = self.task_tx.clone();
+                rayon::spawn(move || {
+                    let content = git::git_diff_file(&path, &file_path, staged)
+                        .unwrap_or_default();
+                    let _ = tx.send(GitResult::PreviewReady { content });
+                });
+            }
+            SidePanel::Branches => {
+                // Load recent commits for selected branch — use commit log
+                let Some(repo) = self.repos.get(self.selected_repo) else { return };
+                let path = repo.path.clone();
+                let tx = self.task_tx.clone();
+                rayon::spawn(move || {
+                    let commits = git::git_log(&path, 50);
+                    let _ = tx.send(GitResult::LogReady { commits });
+                });
+            }
+            SidePanel::Commits => {
+                // Commit detail loaded by load_commit_detail (already wired in log_move_up/down)
+            }
+            SidePanel::Stash => {
+                // Load stash diff for selected entry
+                let Some(repo) = self.repos.get(self.selected_repo) else { return };
+                let stash_idx = self.selected_stash;
+                let path = repo.path.clone();
+                let tx = self.task_tx.clone();
+                rayon::spawn(move || {
+                    // git stash show -p stash@{N}
+                    let content = std::process::Command::new("git")
+                        .args(["stash", "show", "-p", &format!("stash@{{{}}}", stash_idx)])
+                        .current_dir(&path)
+                        .output()
+                        .ok()
+                        .filter(|o| o.status.success())
+                        .map(|o| String::from_utf8_lossy(&o.stdout).to_string())
+                        .unwrap_or_default();
+                    let _ = tx.send(GitResult::PreviewReady { content });
+                });
+            }
+        }
     }
 
     pub fn next_panel(&mut self) {
@@ -84,7 +145,6 @@ impl App {
         self.active_side = panel;
         match panel {
             SidePanel::Repos => {
-                // Ensure branches loaded for preview
                 self.ensure_branches_loaded();
             }
             SidePanel::Files => {
@@ -100,6 +160,7 @@ impl App {
                 self.load_stash_list();
             }
         }
+        self.load_preview();
     }
 
     pub fn load_stash_list(&mut self) {
