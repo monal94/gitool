@@ -158,6 +158,15 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
             app.undo();
             return;
         }
+        // Shift+J/K = scroll preview panel from any left panel
+        KeyCode::Char('J') => {
+            app.preview_scroll = app.preview_scroll.saturating_add(1);
+            return;
+        }
+        KeyCode::Char('K') => {
+            app.preview_scroll = app.preview_scroll.saturating_sub(1);
+            return;
+        }
         _ => {}
     }
 
@@ -324,12 +333,22 @@ fn handle_mouse(app: &mut App, kind: MouseEventKind, col: u16, row: u16, size: R
     let main_h = size.height.saturating_sub(header_h + footer_h + notif_h);
     let main_top = header_h;
 
-    // Left column holds 5 vertically stacked panels (each ~20% of main height).
-    // Right column is the preview pane.
-    let left_w = size.width * 30 / 100;
+    // Left column = 35% width, right column = 65% (preview).
+    let left_w = size.width * 35 / 100;
 
-    // Only handle clicks in the left column.
+    // Handle scroll on the right (preview) column
     if col >= left_w {
+        match kind {
+            MouseEventKind::ScrollUp => {
+                app.preview_scroll = app.preview_scroll.saturating_sub(3);
+                app.dirty = true;
+            }
+            MouseEventKind::ScrollDown => {
+                app.preview_scroll = app.preview_scroll.saturating_add(3);
+                app.dirty = true;
+            }
+            _ => {}
+        }
         return;
     }
 
