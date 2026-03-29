@@ -1,6 +1,7 @@
 mod app;
 mod config;
 mod git;
+mod highlight;
 mod types;
 mod ui;
 

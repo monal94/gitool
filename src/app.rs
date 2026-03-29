@@ -152,6 +152,8 @@ pub struct App {
     pub commit_files_selected: usize,
     pub commit_diff_preview: String,
     pub commit_diff_scroll: usize,
+    pub highlighted_diff: Option<Vec<ratatui::text::Line<'static>>>,
+    pub highlighted_commit_diff: Option<Vec<ratatui::text::Line<'static>>>,
     result_rx: Receiver<GitResult>,
     task_tx: Sender<GitResult>,
     _watcher: Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>,
@@ -209,6 +211,8 @@ impl App {
             commit_files_selected: 0,
             commit_diff_preview: String::new(),
             commit_diff_scroll: 0,
+            highlighted_diff: None,
+            highlighted_commit_diff: None,
             result_rx,
             task_tx,
             _watcher: None,
@@ -303,6 +307,8 @@ impl App {
                     if content.is_empty() {
                         self.notify("No changes to diff".to_string(), false);
                     } else {
+                        let h = crate::highlight::Highlighter::new();
+                        self.highlighted_diff = Some(h.highlight_diff(&content));
                         self.diff_content = content;
                         self.diff_scroll = 0;
                         self.mode = Mode::DiffView;
@@ -440,6 +446,7 @@ impl App {
         self.commit_files_selected = 0;
         self.commit_diff_preview = git::git_diff_commit(path, &hash).unwrap_or_default();
         self.commit_diff_scroll = 0;
+        self.highlight_commit_diff();
     }
 
     /// Load per-file diff for the selected file in commit detail.
@@ -452,6 +459,16 @@ impl App {
             &repo.path, &entry.hash, &file.path,
         ).unwrap_or_default();
         self.commit_diff_scroll = 0;
+        self.highlight_commit_diff();
+    }
+
+    fn highlight_commit_diff(&mut self) {
+        if self.commit_diff_preview.is_empty() {
+            self.highlighted_commit_diff = None;
+        } else {
+            let h = crate::highlight::Highlighter::new();
+            self.highlighted_commit_diff = Some(h.highlight_diff(&self.commit_diff_preview));
+        }
     }
 
     pub fn next_log_panel(&mut self) {

@@ -155,24 +155,11 @@ fn render_diff_preview(f: &mut Frame, app: &App, area: Rect) {
         return;
     }
 
-    let lines: Vec<Line> = app
-        .commit_diff_preview
-        .lines()
-        .map(|line| {
-            let style = if line.starts_with('+') && !line.starts_with("+++") {
-                Style::default().fg(Color::Green)
-            } else if line.starts_with('-') && !line.starts_with("---") {
-                Style::default().fg(Color::Red)
-            } else if line.starts_with("@@") {
-                Style::default().fg(Color::Cyan)
-            } else if line.starts_with("diff ") || line.starts_with("index ") {
-                Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD)
-            } else {
-                Style::default().fg(Color::DarkGray)
-            };
-            Line::from(Span::styled(line, style))
-        })
-        .collect();
+    let lines: Vec<Line> = if let Some(ref highlighted) = app.highlighted_commit_diff {
+        highlighted.clone()
+    } else {
+        super::diff::fallback_lines(&app.commit_diff_preview)
+    };
 
     let total_lines = lines.len();
     let scroll = app.commit_diff_scroll as u16;
