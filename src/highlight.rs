@@ -1,208 +1,65 @@
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
-use syntect::easy::HighlightLines;
-use syntect::highlighting::{self, ThemeSet};
-use syntect::parsing::SyntaxSet;
 
-pub struct Highlighter {
-    ps: SyntaxSet,
-    ts: ThemeSet,
-}
+pub struct Highlighter;
 
 impl Highlighter {
     pub fn new() -> Self {
-        Self {
-            ps: SyntaxSet::load_defaults_newlines(),
-            ts: ThemeSet::load_defaults(),
-        }
+        Self
     }
 
-    /// Highlight diff content with syntax-aware coloring.
-    /// Detects language from diff headers and applies syntax highlighting
-    /// within added/removed/context lines. Diff markers (+/-/@@) get
-    /// their own coloring overlaid.
-    #[allow(dead_code)]
-    pub fn highlight_diff(&self, content: &str) -> Vec<Line<'static>> {
-        let theme = &self.ts.themes["base16-ocean.dark"];
-        let mut current_syntax = self.ps.find_syntax_plain_text();
-        let mut highlighter = HighlightLines::new(current_syntax, theme);
-
-        content
-            .lines()
-            .map(|line| {
-                // Detect file boundaries and switch syntax
-                if line.starts_with("diff --git") {
-                    if let Some(ext) = extract_extension(line)
-                        && let Some(syntax) = self.ps.find_syntax_by_extension(&ext) {
-                            current_syntax = syntax;
-                            highlighter = HighlightLines::new(current_syntax, theme);
-                        }
-                    return make_header_line(line);
-                }
-
-                if line.starts_with("index ") || line.starts_with("---") || line.starts_with("+++") {
-                    return make_header_line(line);
-                }
-
-                if line.starts_with("@@") {
-                    return Line::from(Span::styled(
-                        line.to_string(),
-                        Style::default().fg(Color::Cyan),
-                    ));
-                }
-
-                // For +/- lines, strip the marker, highlight the code, then re-add marker styling
-                let (marker, code, base_fg) = if let Some(rest) = line.strip_prefix('+') {
-                    ("+", rest, Color::Green)
-                } else if let Some(rest) = line.strip_prefix('-') {
-                    ("-", rest, Color::Red)
-                } else {
-                    // Context line — highlight normally
-                    let spans = syntect_to_spans(&mut highlighter, line, &self.ps);
-                    if spans.is_empty() {
-                        return Line::from(Span::styled(
-                            line.to_string(),
-                            Style::default().fg(Color::DarkGray),
-                        ));
-                    }
-                    return Line::from(spans);
-                };
-
-                // Highlight the code portion
-                let code_spans = syntect_to_spans(&mut highlighter, code, &self.ps);
-
-                let mut spans = vec![Span::styled(
-                    marker.to_string(),
-                    Style::default().fg(base_fg).add_modifier(Modifier::BOLD),
-                )];
-
-                if code_spans.is_empty() {
-                    spans.push(Span::styled(
-                        code.to_string(),
-                        Style::default().fg(base_fg),
-                    ));
-                } else {
-                    // Merge syntax colors with diff base color
-                    for span in code_spans {
-                        let fg = match span.style.fg {
-                            Some(Color::Reset) | Some(Color::DarkGray) | None => base_fg,
-                            Some(c) => c,
-                        };
-                        spans.push(Span::styled(
-                            span.content.into_owned(),
-                            Style::default().fg(fg),
-                        ));
-                    }
-                }
-
-                Line::from(spans)
-            })
-            .collect()
-    }
-
-    /// Highlight only a window of lines from the diff for rendering.
-    /// This avoids processing 100k lines when only 50 are visible.
+    /// Highlight a window of diff lines with clear, high-contrast colors.
+    /// No syntect — uses simple diff-aware coloring like lazygit/gitui.
     pub fn highlight_diff_window(&self, content: &str, start: usize, count: usize) -> Vec<Line<'static>> {
-        let theme = &self.ts.themes["base16-ocean.dark"];
-        let mut current_syntax = self.ps.find_syntax_plain_text();
-        let mut highlighter = HighlightLines::new(current_syntax, theme);
-        let end = start + count;
-
         content
             .lines()
-            .enumerate()
-            .map(|(i, line)| {
-                // Track syntax changes even for lines before the window
-                if line.starts_with("diff --git")
-                    && let Some(ext) = extract_extension(line)
-                        && let Some(syntax) = self.ps.find_syntax_by_extension(&ext) {
-                            current_syntax = syntax;
-                            highlighter = HighlightLines::new(current_syntax, theme);
-                        }
-
-                // For lines outside the window: feed through syntect to maintain
-                // highlighter state, but don't build output spans
-                if i < start || i >= end {
-                    let code = line.strip_prefix('+')
-                        .or_else(|| line.strip_prefix('-'))
-                        .unwrap_or(line);
-                    if !line.starts_with("diff ") && !line.starts_with("@@") && !line.starts_with("index ") {
-                        let _ = highlighter.highlight_line(code, &self.ps);
-                    }
-                    return Line::from("");
-                }
-
-                if line.starts_with("diff --git") || line.starts_with("index ") || line.starts_with("---") || line.starts_with("+++") {
-                    return make_header_line(line);
-                }
-                if line.starts_with("@@") {
-                    return Line::from(Span::styled(line.to_string(), Style::default().fg(Color::Cyan)));
-                }
-
-                let (marker, code, base_fg) = if let Some(rest) = line.strip_prefix('+') {
-                    ("+", rest, Color::Green)
-                } else if let Some(rest) = line.strip_prefix('-') {
-                    ("-", rest, Color::Red)
-                } else {
-                    let spans = syntect_to_spans(&mut highlighter, line, &self.ps);
-                    if spans.is_empty() {
-                        return Line::from(Span::styled(line.to_string(), Style::default().fg(Color::DarkGray)));
-                    }
-                    return Line::from(spans);
-                };
-
-                let code_spans = syntect_to_spans(&mut highlighter, code, &self.ps);
-                let mut spans = vec![Span::styled(marker.to_string(), Style::default().fg(base_fg).add_modifier(Modifier::BOLD))];
-                if code_spans.is_empty() {
-                    spans.push(Span::styled(code.to_string(), Style::default().fg(base_fg)));
-                } else {
-                    for span in code_spans {
-                        let fg = match span.style.fg {
-                            Some(Color::Reset) | Some(Color::DarkGray) | None => base_fg,
-                            Some(c) => c,
-                        };
-                        spans.push(Span::styled(span.content.into_owned(), Style::default().fg(fg)));
-                    }
-                }
-                Line::from(spans)
-            })
             .skip(start)
             .take(count)
+            .map(|line| colorize_diff_line(line))
             .collect()
     }
 }
 
-fn make_header_line(line: &str) -> Line<'static> {
+fn colorize_diff_line(line: &str) -> Line<'static> {
+    if line.starts_with("diff --git") || line.starts_with("index ") {
+        return Line::from(Span::styled(
+            line.to_string(),
+            Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        ));
+    }
+    if line.starts_with("--- ") || line.starts_with("+++ ") {
+        return Line::from(Span::styled(
+            line.to_string(),
+            Style::default().fg(Color::Yellow),
+        ));
+    }
+    if line.starts_with("@@") {
+        return Line::from(Span::styled(
+            line.to_string(),
+            Style::default().fg(Color::Cyan),
+        ));
+    }
+    if let Some(rest) = line.strip_prefix('+') {
+        return Line::from(vec![
+            Span::styled("+", Style::default().fg(Color::Green).add_modifier(Modifier::BOLD)),
+            Span::styled(rest.to_string(), Style::default().fg(Color::Green)),
+        ]);
+    }
+    if let Some(rest) = line.strip_prefix('-') {
+        return Line::from(vec![
+            Span::styled("-", Style::default().fg(Color::Red).add_modifier(Modifier::BOLD)),
+            Span::styled(rest.to_string(), Style::default().fg(Color::Red)),
+        ]);
+    }
+    // Context line
     Line::from(Span::styled(
         line.to_string(),
-        Style::default().fg(Color::Yellow).add_modifier(Modifier::BOLD),
+        Style::default().fg(Color::White),
     ))
-}
-
-/// Convert syntect highlighted ranges to ratatui Spans.
-fn syntect_to_spans<'a>(h: &mut HighlightLines, line: &str, ps: &SyntaxSet) -> Vec<Span<'a>> {
-    let ranges = h.highlight_line(line, ps);
-    let Ok(ranges) = ranges else { return Vec::new() };
-
-    ranges
-        .iter()
-        .map(|(style, text)| {
-            let fg = syntect_color_to_ratatui(style.foreground);
-            Span::styled(
-                text.to_string(),
-                Style::default().fg(fg),
-            )
-        })
-        .collect()
-}
-
-fn syntect_color_to_ratatui(c: highlighting::Color) -> Color {
-    Color::Rgb(c.r, c.g, c.b)
 }
 
 /// Extract file extension from a "diff --git a/foo.rs b/foo.rs" line.
 fn extract_extension(diff_line: &str) -> Option<String> {
-    // Parse "diff --git a/path/to/file.ext b/path/to/file.ext"
     let parts: Vec<&str> = diff_line.split_whitespace().collect();
     let path = parts.last()?;
     let path = path.strip_prefix("b/")?;
@@ -233,17 +90,47 @@ mod tests {
     }
 
     #[test]
-    fn highlight_diff_produces_lines() {
-        let h = Highlighter::new();
-        let diff = "diff --git a/test.rs b/test.rs\n--- a/test.rs\n+++ b/test.rs\n@@ -1,3 +1,3 @@\n-fn old() {}\n+fn new() {}\n context line\n";
-        let lines = h.highlight_diff(diff);
-        assert_eq!(lines.len(), 7);
+    fn colorize_added_line() {
+        let line = colorize_diff_line("+fn main() {}");
+        assert_eq!(line.spans.len(), 2);
     }
 
     #[test]
-    fn highlight_diff_empty_input() {
+    fn colorize_removed_line() {
+        let line = colorize_diff_line("-old code");
+        assert_eq!(line.spans.len(), 2);
+    }
+
+    #[test]
+    fn colorize_header_line() {
+        let line = colorize_diff_line("diff --git a/test.rs b/test.rs");
+        assert_eq!(line.spans.len(), 1);
+    }
+
+    #[test]
+    fn colorize_hunk_header() {
+        let line = colorize_diff_line("@@ -1,3 +1,4 @@ fn main()");
+        assert_eq!(line.spans.len(), 1);
+    }
+
+    #[test]
+    fn colorize_context_line() {
+        let line = colorize_diff_line(" unchanged code");
+        assert_eq!(line.spans.len(), 1);
+    }
+
+    #[test]
+    fn window_respects_start_and_count() {
+        let content = "line0\nline1\nline2\nline3\nline4";
         let h = Highlighter::new();
-        let lines = h.highlight_diff("");
-        assert!(lines.is_empty());
+        let result = h.highlight_diff_window(content, 1, 2);
+        assert_eq!(result.len(), 2);
+    }
+
+    #[test]
+    fn window_empty_input() {
+        let h = Highlighter::new();
+        let result = h.highlight_diff_window("", 0, 10);
+        assert!(result.is_empty());
     }
 }
