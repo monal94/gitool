@@ -65,13 +65,21 @@ fn diff_to_string(diff: &git2::Diff) -> Result<String, String> {
     let print_result = diff.print(git2::DiffFormat::Patch, |_delta, _hunk, line| {
         if line_count >= MAX_DIFF_LINES {
             truncated = true;
-            return false; // stop iteration
+            return false;
         }
         match line.origin() {
-            '+' | '-' | ' ' => output.push(line.origin()),
-            _ => {}
+            '+' | '-' | ' ' => {
+                output.push(line.origin());
+                output.push_str(&String::from_utf8_lossy(line.content()));
+            }
+            'F' | 'H' | '>' | '<' | 'B' => {
+                // File header, hunk header, and binary markers — emit content as-is
+                output.push_str(&String::from_utf8_lossy(line.content()));
+            }
+            _ => {
+                output.push_str(&String::from_utf8_lossy(line.content()));
+            }
         }
-        output.push_str(&String::from_utf8_lossy(line.content()));
         line_count += 1;
         true
     });
