@@ -14,7 +14,7 @@ pub fn render(f: &mut Frame, app: &App) {
         fallback_lines(&app.diff_content)
     };
 
-    let total_lines = lines.len() as u16;
+    let total_lines = lines.len();
 
     let block = Block::default()
         .title(" Diff (Esc to close, j/k to scroll) ")
@@ -29,7 +29,7 @@ pub fn render(f: &mut Frame, app: &App) {
 
     let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight);
     let mut scrollbar_state =
-        ScrollbarState::new(total_lines as usize).position(app.diff_scroll as usize);
+        ScrollbarState::new(total_lines).position(app.diff_scroll as usize);
     f.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
 }
 
