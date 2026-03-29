@@ -169,6 +169,7 @@ pub struct App {
     pub highlighter: crate::highlight::Highlighter,
     cached_repo: Option<git2::Repository>,
     cached_repo_path: Option<PathBuf>,
+    files_generation: u64,
     result_rx: Receiver<GitResult>,
     task_tx: Sender<GitResult>,
     _watcher: Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>,
@@ -228,6 +229,7 @@ impl App {
             highlighter: crate::highlight::Highlighter::new(),
             cached_repo: None,
             cached_repo_path: None,
+            files_generation: 0,
             result_rx,
             task_tx,
             _watcher: None,
@@ -300,6 +302,7 @@ impl App {
                     }
                     // Invalidate cached repo since state changed
                     self.invalidate_repo_cache();
+                    self.files_generation = self.files_generation.wrapping_add(1); // force file reload
                     // Rescan the affected repo (full scan for selected, light for others)
                     let is_selected = self.repos.get(self.selected_repo)
                         .is_some_and(|r| r.path == repo_path);
@@ -338,7 +341,15 @@ impl App {
                 }
                 GitResult::FileChanged { repo_path } => {
                     if let Some(repo_path) = repo_path {
+                        // Bump generation for the changed repo
+                        if let Some(pos) = self.repos.iter().position(|r| r.path == repo_path) {
+                            self.repos[pos].generation += 1;
+                        }
+                        if let Some(pos) = self.all_repos.iter().position(|r| r.path == repo_path) {
+                            self.all_repos[pos].generation += 1;
+                        }
                         // Selective refresh: only rescan the changed repo
+                        self.invalidate_repo_cache();
                         let is_selected = self.repos.get(self.selected_repo)
                             .is_some_and(|r| r.path == repo_path);
                         let new_status = if is_selected {
@@ -346,7 +357,11 @@ impl App {
                         } else {
                             git::scan_repo(&repo_path)
                         };
-                        if let Some(new_status) = new_status {
+                        if let Some(mut new_status) = new_status {
+                            // Preserve bumped generation
+                            if let Some(old) = self.repos.iter().find(|r| r.path == repo_path) {
+                                new_status.generation = old.generation;
+                            }
                             if let Some(pos) = self.repos.iter().position(|r| r.path == repo_path) {
                                 self.repos[pos] = new_status.clone();
                             }
@@ -699,19 +714,26 @@ impl App {
     /// Reload file statuses for the currently selected repo.
     fn reload_files(&mut self) {
         if let Some(repo) = self.repos.get(self.selected_repo) {
+            // Skip if generation hasn't changed (files already up to date)
+            if repo.generation == self.files_generation && !self.files.is_empty() {
+                return;
+            }
             let path = repo.path.clone();
+            let current_gen = repo.generation;
             self.ensure_cached_repo(&path);
             self.files = if let Some(ref cached) = self.cached_repo {
                 git::get_file_statuses_with_repo(cached)
             } else {
                 git::get_file_statuses(&path)
             };
+            self.files_generation = current_gen;
             if self.selected_file >= self.files.len() {
                 self.selected_file = self.files.len().saturating_sub(1);
             }
         } else {
             self.files.clear();
             self.selected_file = 0;
+            self.files_generation = 0;
         }
     }
 

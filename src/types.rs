@@ -43,6 +43,7 @@ pub struct RepoStatus {
     pub branches: Vec<BranchEntry>,
     pub branches_loaded: bool,
     pub default_branch: String,
+    pub generation: u64,
 }
 
 #[cfg(test)]
@@ -214,6 +215,7 @@ mod tests {
             branches: vec![],
             branches_loaded: false,
             default_branch: "main".to_string(),
+            generation: 0,
         };
         assert_eq!(repo.name, "my-repo");
         assert_eq!(repo.path, PathBuf::from("/home/user/repos/my-repo"));
@@ -239,6 +241,7 @@ mod tests {
             branches: vec![],
             branches_loaded: false,
             default_branch: "main".to_string(),
+            generation: 0,
         };
         assert!(!repo.branches_loaded);
     }
@@ -280,6 +283,7 @@ mod tests {
             branches,
             branches_loaded: true,
             default_branch: "main".to_string(),
+            generation: 0,
         };
         assert_eq!(repo.branches.len(), 2);
         assert!(repo.branches_loaded);
@@ -301,6 +305,7 @@ mod tests {
             branches: vec![],
             branches_loaded: true,
             default_branch: "main".to_string(),
+            generation: 0,
         };
         let cloned = repo.clone();
         assert_eq!(cloned.name, "clone-test");

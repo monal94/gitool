@@ -61,6 +61,7 @@ pub fn scan_repo(path: &Path) -> Option<RepoStatus> {
         branches: Vec::new(),
         branches_loaded: false,
         default_branch,
+        generation: 0,
     })
 }
 
@@ -87,6 +88,7 @@ pub fn scan_repo_full(path: &Path) -> Option<RepoStatus> {
         branches,
         branches_loaded: true,
         default_branch,
+        generation: 0,
     })
 }
 
