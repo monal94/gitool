@@ -88,6 +88,7 @@ fn run_app(
                         app.mark_dirty();
                     }
                 }
+                Event::Resize(_, _) => app.mark_dirty(),
                 _ => {}
             }
         }

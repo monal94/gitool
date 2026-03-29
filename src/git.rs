@@ -47,7 +47,7 @@ pub fn scan_repo(path: &Path) -> Option<RepoStatus> {
     let branch = current_branch(&repo);
     let (ahead, behind) = upstream_drift(&repo);
     let dirty = dirty_count(&repo);
-    let stash = stash_count(path);
+    let stash = stash_count(&repo);
 
     Some(RepoStatus {
         name,
@@ -70,7 +70,7 @@ pub fn scan_repo_full(path: &Path) -> Option<RepoStatus> {
     let branch = current_branch(&repo);
     let (ahead, behind) = upstream_drift(&repo);
     let dirty = dirty_count(&repo);
-    let stash = stash_count(path);
+    let stash = stash_count(&repo);
     let branches = collect_branches(&repo, &branch);
 
     Some(RepoStatus {
@@ -103,26 +103,18 @@ fn current_branch(repo: &Repository) -> String {
 }
 
 fn upstream_drift(repo: &Repository) -> (usize, usize) {
-    let head = match repo.head().ok().and_then(|h| h.target()) {
-        Some(oid) => oid,
-        None => return (0, 0),
-    };
+    let Ok(head_ref) = repo.head() else { return (0, 0) };
+    let Some(head_oid) = head_ref.target() else { return (0, 0) };
 
-    let upstream = match repo
-        .head()
-        .ok()
-        .and_then(|h| {
-            let branch_name = h.shorthand()?.to_string();
-            repo.find_branch(&branch_name, BranchType::Local).ok()
-        })
+    let upstream_oid = head_ref
+        .shorthand()
+        .and_then(|name| repo.find_branch(name, BranchType::Local).ok())
         .and_then(|b| b.upstream().ok())
-        .and_then(|u| u.get().target())
-    {
-        Some(oid) => oid,
-        None => return (0, 0),
-    };
+        .and_then(|u| u.get().target());
 
-    repo.graph_ahead_behind(head, upstream)
+    let Some(upstream_oid) = upstream_oid else { return (0, 0) };
+
+    repo.graph_ahead_behind(head_oid, upstream_oid)
         .unwrap_or((0, 0))
 }
 
@@ -135,18 +127,8 @@ fn dirty_count(repo: &Repository) -> usize {
         .unwrap_or(0)
 }
 
-fn stash_count(path: &Path) -> usize {
-    Command::new("git")
-        .args(["stash", "list"])
-        .current_dir(path)
-        .output()
-        .ok()
-        .map(|o| {
-            String::from_utf8_lossy(&o.stdout)
-                .lines()
-                .count()
-        })
-        .unwrap_or(0)
+fn stash_count(repo: &Repository) -> usize {
+    repo.reflog("refs/stash").map(|r| r.len()).unwrap_or(0)
 }
 
 /// Collect a unified branch list merging local and remote refs by name.

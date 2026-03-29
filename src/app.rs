@@ -224,6 +224,9 @@ impl App {
                         .file_name()
                         .map(|n| n.to_string_lossy().to_string())
                         .unwrap_or_default();
+                    if self.command_log.len() >= 200 {
+                        self.command_log.remove(0);
+                    }
                     self.command_log.push(CommandLogEntry {
                         timestamp: Instant::now(),
                         repo_name,
@@ -377,6 +380,13 @@ impl App {
         }
     }
 
+    fn push_undo(&mut self, op: UndoOp) {
+        if self.undo_stack.len() >= 50 {
+            self.undo_stack.remove(0);
+        }
+        self.undo_stack.push(op);
+    }
+
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
     }
@@ -387,11 +397,7 @@ impl App {
             Duration::from_millis(500),
             move |res: Result<Vec<notify_debouncer_mini::DebouncedEvent>, _>| {
                 if let Ok(events) = res {
-                    let dominated_by_git = events.iter().any(|e| {
-                        matches!(e.kind, DebouncedEventKind::Any)
-                            && e.path.to_string_lossy().contains(".git")
-                    });
-                    if dominated_by_git {
+                    if events.iter().any(|e| matches!(e.kind, DebouncedEventKind::Any)) {
                         let _ = tx.send(GitResult::FileChanged);
                     }
                 }
@@ -399,11 +405,14 @@ impl App {
         );
 
         if let Ok(mut debouncer) = debouncer {
-            // Watch the workspace directory
-            let _ = debouncer.watcher().watch(
-                &self.workspace_path,
-                notify::RecursiveMode::Recursive,
-            );
+            // Watch only .git directories to avoid excessive FS events
+            for repo in &self.all_repos {
+                let git_dir = repo.path.join(".git");
+                let _ = debouncer.watcher().watch(
+                    &git_dir,
+                    notify::RecursiveMode::Recursive,
+                );
+            }
             self._watcher = Some(debouncer);
         }
     }
@@ -422,8 +431,8 @@ impl App {
                     self.all_repos[pos].branches = branches;
                     self.all_repos[pos].branches_loaded = true;
                 }
+                self.reload_files();
             }
-            self.reload_files();
         }
     }
 
@@ -568,7 +577,7 @@ impl App {
         let Some(repo) = self.repos.get(self.selected_repo) else { return };
         let path = repo.path.clone();
         if repo.dirty > 0 {
-            self.undo_stack.push(UndoOp::Stash { repo_path: path.clone() });
+            self.push_undo(UndoOp::Stash { repo_path: path.clone() });
             self.dispatch(path, "Stash", |p| git::git_stash(p));
         } else if repo.stash > 0 {
             self.mode = Mode::Confirm {
@@ -597,7 +606,7 @@ impl App {
         };
 
         let previous_branch = repo.branch.clone();
-        self.undo_stack.push(UndoOp::Checkout {
+        self.push_undo(UndoOp::Checkout {
             repo_path: path.clone(),
             previous_branch,
         });
@@ -829,7 +838,7 @@ impl App {
                     }
                 }
                 ConfirmAction::StashPop(path) => {
-                    self.undo_stack.push(UndoOp::StashPop { repo_path: path.clone() });
+                    self.push_undo(UndoOp::StashPop { repo_path: path.clone() });
                     self.dispatch(path, "Stash pop", |p| git::git_stash_pop(p));
                 }
                 ConfirmAction::DeleteBranch(path, name) => {
