@@ -324,6 +324,37 @@ pub fn git_discard(path: &Path, file: &str) -> Result<String, String> {
     run_git(path, &["checkout", "--", file])
 }
 
+pub fn git_log(path: &Path, limit: usize) -> Vec<crate::app::CommitEntry> {
+    let output = Command::new("git")
+        .args(["log", &format!("-{}", limit), "--format=%h\t%an\t%cr\t%s"])
+        .current_dir(path)
+        .output();
+
+    let Ok(output) = output else { return Vec::new() };
+    if !output.status.success() { return Vec::new(); }
+
+    String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .filter_map(|line| {
+            let parts: Vec<&str> = line.splitn(4, '\t').collect();
+            if parts.len() == 4 {
+                Some(crate::app::CommitEntry {
+                    hash: parts[0].to_string(),
+                    author: parts[1].to_string(),
+                    date: parts[2].to_string(),
+                    message: parts[3].to_string(),
+                })
+            } else {
+                None
+            }
+        })
+        .collect()
+}
+
+pub fn git_commit(path: &Path, message: &str) -> Result<String, String> {
+    run_git(path, &["commit", "-m", message])
+}
+
 pub fn git_create_branch(path: &Path, name: &str) -> Result<String, String> {
     run_git(path, &["checkout", "-b", name])
 }

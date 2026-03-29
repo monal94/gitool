@@ -19,6 +19,7 @@ pub enum Mode {
     WorkspaceSwitcher,
     DiffView,
     CommandLog,
+    CommitLog,
     Confirm {
         message: String,
         action: ConfirmAction,
@@ -34,7 +35,8 @@ pub enum Mode {
 #[derive(Debug, Clone, PartialEq)]
 pub enum TextInputAction {
     CreateBranch,
-    RenameBranch(String), // old name
+    RenameBranch(String),
+    CommitMessage,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -52,6 +54,14 @@ pub struct Notification {
     pub message: String,
     pub is_error: bool,
     pub created: Instant,
+}
+
+#[derive(Debug, Clone)]
+pub struct CommitEntry {
+    pub hash: String,
+    pub author: String,
+    pub date: String,
+    pub message: String,
 }
 
 #[derive(Debug, Clone)]
@@ -100,6 +110,8 @@ pub struct App {
     pub filter_active: bool,
     pub files: Vec<FileEntry>,
     pub selected_file: usize,
+    pub commit_log: Vec<CommitEntry>,
+    pub commit_log_scroll: u16,
     pub command_log: Vec<CommandLogEntry>,
     pub command_log_scroll: u16,
     pub dirty: bool,
@@ -145,6 +157,8 @@ impl App {
             filter_active: false,
             files: Vec::new(),
             selected_file: 0,
+            commit_log: Vec::new(),
+            commit_log_scroll: 0,
             command_log: Vec::new(),
             command_log_scroll: 0,
             dirty: true,
@@ -571,6 +585,25 @@ impl App {
         }
     }
 
+    pub fn show_commit_log(&mut self) {
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        self.commit_log = git::git_log(&repo.path, 50);
+        self.commit_log_scroll = 0;
+        if self.commit_log.is_empty() {
+            self.notify("No commits found".to_string(), false);
+        } else {
+            self.mode = Mode::CommitLog;
+        }
+    }
+
+    pub fn create_commit_prompt(&mut self) {
+        self.mode = Mode::TextInput {
+            prompt: "Commit message: ".to_string(),
+            input: String::new(),
+            action: TextInputAction::CommitMessage,
+        };
+    }
+
     pub fn create_branch_prompt(&mut self) {
         self.mode = Mode::TextInput {
             prompt: "New branch name: ".to_string(),
@@ -643,6 +676,12 @@ impl App {
                     let new = input;
                     self.dispatch(path, &format!("Rename {} -> {}", old, new), move |p| {
                         git::git_rename_branch(p, &old, &new)
+                    });
+                }
+                TextInputAction::CommitMessage => {
+                    let msg = input;
+                    self.dispatch(path, "Commit", move |p| {
+                        git::git_commit(p, &msg)
                     });
                 }
             }
