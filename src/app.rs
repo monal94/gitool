@@ -1,10 +1,11 @@
 use crate::config::Config;
 use crate::git;
 use crate::types::{FileEntry, RepoStatus};
+use notify_debouncer_mini::{new_debouncer, DebouncedEventKind};
 use std::collections::HashSet;
 use std::path::PathBuf;
 use std::sync::mpsc::{self, Receiver, Sender};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum Panel {
@@ -86,6 +87,7 @@ pub enum GitResult {
     DiffError {
         message: String,
     },
+    FileChanged,
 }
 
 pub struct App {
@@ -118,6 +120,7 @@ pub struct App {
     pub zoomed_panel: Option<Panel>,
     result_rx: Receiver<GitResult>,
     task_tx: Sender<GitResult>,
+    _watcher: Option<notify_debouncer_mini::Debouncer<notify::RecommendedWatcher>>,
 }
 
 impl App {
@@ -166,8 +169,10 @@ impl App {
             zoomed_panel: None,
             result_rx,
             task_tx,
+            _watcher: None,
         };
         app.ensure_branches_loaded();
+        app.start_watcher();
         app
     }
 
@@ -256,6 +261,10 @@ impl App {
                 GitResult::DiffError { message } => {
                     self.notify(format!("Diff failed: {}", message), true);
                 }
+                GitResult::FileChanged => {
+                    self.refresh();
+                    self.dirty = true;
+                }
             }
         }
     }
@@ -331,6 +340,33 @@ impl App {
 
     pub fn mark_dirty(&mut self) {
         self.dirty = true;
+    }
+
+    fn start_watcher(&mut self) {
+        let tx = self.task_tx.clone();
+        let debouncer = new_debouncer(
+            Duration::from_millis(500),
+            move |res: Result<Vec<notify_debouncer_mini::DebouncedEvent>, _>| {
+                if let Ok(events) = res {
+                    let dominated_by_git = events.iter().any(|e| {
+                        matches!(e.kind, DebouncedEventKind::Any)
+                            && e.path.to_string_lossy().contains(".git")
+                    });
+                    if dominated_by_git {
+                        let _ = tx.send(GitResult::FileChanged);
+                    }
+                }
+            },
+        );
+
+        if let Ok(mut debouncer) = debouncer {
+            // Watch the workspace directory
+            let _ = debouncer.watcher().watch(
+                &self.workspace_path,
+                notify::RecursiveMode::Recursive,
+            );
+            self._watcher = Some(debouncer);
+        }
     }
 
     /// Load branches for the currently selected repo if not already loaded.
