@@ -21,6 +21,7 @@ fn default_workspace() -> String {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Default)]
 pub struct Config {
     pub workspaces: BTreeMap<String, WorkspaceConfig>,
     #[serde(default)]
@@ -38,7 +39,8 @@ impl Default for Defaults {
 impl Config {
     pub fn config_path() -> PathBuf {
         dirs::config_dir()
-            .unwrap_or_else(|| PathBuf::from("~/.config"))
+            .or_else(|| dirs::home_dir().map(|h| h.join(".config")))
+            .unwrap_or_else(|| PathBuf::from(".config"))
             .join("ws")
             .join("config.yaml")
     }
@@ -108,25 +110,16 @@ impl Config {
     }
 }
 
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            workspaces: BTreeMap::new(),
-            defaults: Defaults::default(),
-        }
-    }
-}
 
 pub fn expand_path(path: &str) -> String {
     shellexpand(path)
 }
 
 fn shellexpand(path: &str) -> String {
-    if let Some(rest) = path.strip_prefix("~/") {
-        if let Some(home) = dirs::home_dir() {
+    if let Some(rest) = path.strip_prefix("~/")
+        && let Some(home) = dirs::home_dir() {
             return home.join(rest).to_string_lossy().to_string();
         }
-    }
     path.to_string()
 }
 

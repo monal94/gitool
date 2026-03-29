@@ -147,7 +147,7 @@ fn render_text_input(f: &mut Frame, app: &App) {
     }
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
+pub fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
     let vertical = Layout::default()
         .direction(Direction::Vertical)
         .constraints([

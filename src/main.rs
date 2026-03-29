@@ -195,11 +195,10 @@ fn handle_mouse(app: &mut App, kind: MouseEventKind, col: u16, row: u16, size: R
             } else if in_branch {
                 app.active_panel = Panel::Branches;
                 let idx = (row - main_top).saturating_sub(4) as usize; // 3 for summary + 1 border
-                if let Some(repo) = app.selected_repo() {
-                    if idx < repo.branches.len() {
+                if let Some(repo) = app.selected_repo()
+                    && idx < repo.branches.len() {
                         app.selected_branch = idx;
                     }
-                }
             } else if in_files {
                 app.active_panel = Panel::Files;
                 let idx = (row - main_top - branch_h).saturating_sub(1) as usize;

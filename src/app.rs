@@ -339,12 +339,11 @@ impl App {
     }
 
     pub fn clear_stale_notification(&mut self) {
-        if let Some(ref n) = self.notification {
-            if n.created.elapsed().as_secs() >= 3 {
+        if let Some(ref n) = self.notification
+            && n.created.elapsed().as_secs() >= 3 {
                 self.notification = None;
                 self.dirty = true;
             }
-        }
     }
 
     pub fn undo(&mut self) {
@@ -396,11 +395,10 @@ impl App {
         let debouncer = new_debouncer(
             Duration::from_millis(500),
             move |res: Result<Vec<notify_debouncer_mini::DebouncedEvent>, _>| {
-                if let Ok(events) = res {
-                    if events.iter().any(|e| matches!(e.kind, DebouncedEventKind::Any)) {
+                if let Ok(events) = res
+                    && events.iter().any(|e| matches!(e.kind, DebouncedEventKind::Any)) {
                         let _ = tx.send(GitResult::FileChanged);
                     }
-                }
             },
         );
 
@@ -483,11 +481,10 @@ impl App {
                 }
             }
             Panel::Branches => {
-                if let Some(repo) = self.selected_repo() {
-                    if self.selected_branch + 1 < repo.branches.len() {
+                if let Some(repo) = self.selected_repo()
+                    && self.selected_branch + 1 < repo.branches.len() {
                         self.selected_branch += 1;
                     }
-                }
             }
             Panel::Files => {
                 if self.selected_file + 1 < self.files.len() {
@@ -546,7 +543,7 @@ impl App {
     pub fn pull(&mut self) {
         let targets = self.bulk_targets();
         for path in targets {
-            self.dispatch(path, "Pull", |p| git::git_pull(p));
+            self.dispatch(path, "Pull", git::git_pull);
         }
     }
 
@@ -569,7 +566,7 @@ impl App {
     pub fn fetch(&mut self) {
         let targets = self.bulk_targets();
         for path in targets {
-            self.dispatch(path, "Fetch", |p| git::git_fetch(p));
+            self.dispatch(path, "Fetch", git::git_fetch);
         }
     }
 
@@ -578,7 +575,7 @@ impl App {
         let path = repo.path.clone();
         if repo.dirty > 0 {
             self.push_undo(UndoOp::Stash { repo_path: path.clone() });
-            self.dispatch(path, "Stash", |p| git::git_stash(p));
+            self.dispatch(path, "Stash", git::git_stash);
         } else if repo.stash > 0 {
             self.mode = Mode::Confirm {
                 message: format!("Pop stash for {}? [y/n]", repo.name),
@@ -830,16 +827,16 @@ impl App {
         if let Mode::Confirm { action, .. } = mode {
             match action {
                 ConfirmAction::Push(path) => {
-                    self.dispatch(path, "Push", |p| git::git_push(p));
+                    self.dispatch(path, "Push", git::git_push);
                 }
                 ConfirmAction::BulkPush(paths) => {
                     for path in paths {
-                        self.dispatch(path, "Push", |p| git::git_push(p));
+                        self.dispatch(path, "Push", git::git_push);
                     }
                 }
                 ConfirmAction::StashPop(path) => {
                     self.push_undo(UndoOp::StashPop { repo_path: path.clone() });
-                    self.dispatch(path, "Stash pop", |p| git::git_stash_pop(p));
+                    self.dispatch(path, "Stash pop", git::git_stash_pop);
                 }
                 ConfirmAction::DeleteBranch(path, name) => {
                     let branch_name = name.clone();

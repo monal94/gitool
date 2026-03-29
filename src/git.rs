@@ -203,11 +203,10 @@ fn collect_branches(repo: &Repository, current: &str) -> Vec<BranchEntry> {
 
             if map.contains_key(&name) {
                 // Already added from local — just ensure is_head_ref is set
-                if head_ref.as_deref() == Some(&name) {
-                    if let Some(entry) = map.get_mut(&name) {
+                if head_ref.as_deref() == Some(&name)
+                    && let Some(entry) = map.get_mut(&name) {
                         entry.is_head_ref = true;
                     }
-                }
                 continue;
             }
 

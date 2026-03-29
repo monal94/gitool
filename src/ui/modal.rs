@@ -1,6 +1,6 @@
 use crate::app::App;
+use super::centered_rect;
 use ratatui::Frame;
-use ratatui::layout::{Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{Block, Borders, Clear, List, ListItem, ListState};
@@ -14,8 +14,8 @@ pub fn render_workspace_switcher(f: &mut Frame, app: &App) {
     let names = app.workspace_names();
     let items: Vec<ListItem> = names
         .iter()
-        .enumerate()
-        .map(|(_i, name)| {
+        
+        .map(|name| {
             let is_current = *name == app.workspace_name;
             let mut spans = vec![Span::styled(
                 format!(" {}", name),
@@ -51,21 +51,3 @@ pub fn render_workspace_switcher(f: &mut Frame, app: &App) {
     f.render_stateful_widget(list, area, &mut state);
 }
 
-fn centered_rect(percent_x: u16, percent_y: u16, area: Rect) -> Rect {
-    let vertical = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage((100 - percent_y) / 2),
-            Constraint::Percentage(percent_y),
-            Constraint::Percentage((100 - percent_y) / 2),
-        ])
-        .split(area);
-    Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Percentage((100 - percent_x) / 2),
-            Constraint::Percentage(percent_x),
-            Constraint::Percentage((100 - percent_x) / 2),
-        ])
-        .split(vertical[1])[1]
-}
