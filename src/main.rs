@@ -108,16 +108,18 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         }
         KeyCode::Char(n @ '1'..='5') => {
             if let Some(panel) = SidePanel::from_num(n) {
-                app.active_side = panel;
+                app.switch_panel(panel);
             }
             return;
         }
         KeyCode::Tab => {
-            app.active_side = app.active_side.next();
+            let next = app.active_side.next();
+            app.switch_panel(next);
             return;
         }
         KeyCode::BackTab => {
-            app.active_side = app.active_side.prev();
+            let prev = app.active_side.prev();
+            app.switch_panel(prev);
             return;
         }
         KeyCode::Char('/') => {
@@ -170,7 +172,7 @@ fn handle_repos_panel(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         KeyCode::Char('p') => app.pull(),
         KeyCode::Char('f') => app.fetch(),
         KeyCode::Enter => {
-            app.active_side = SidePanel::Files;
+            app.switch_panel(SidePanel::Files);
         }
         _ => {}
     }
@@ -276,7 +278,7 @@ fn handle_mouse(app: &mut App, kind: MouseEventKind, col: u16, row: u16, size: R
 
     match kind {
         MouseEventKind::Down(_) => {
-            app.active_side = panel;
+            app.switch_panel(panel);
             // Approximate the clicked item index (subtract 1 for border).
             let idx = (row.saturating_sub(panel_top)).saturating_sub(1) as usize;
             match panel {
@@ -293,11 +295,10 @@ fn handle_mouse(app: &mut App, kind: MouseEventKind, col: u16, row: u16, size: R
                     }
                 }
                 SidePanel::Branches => {
-                    if let Some(repo) = app.selected_repo() {
-                        if idx < repo.branches.len() {
+                    if let Some(repo) = app.selected_repo()
+                        && idx < repo.branches.len() {
                             app.selected_branch = idx;
                         }
-                    }
                 }
                 SidePanel::Commits => {
                     if idx < app.commit_log.len() {

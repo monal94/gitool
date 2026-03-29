@@ -1,3 +1,4 @@
+#![allow(dead_code)]
 use crate::config::Config;
 use crate::git;
 use crate::types::{FileEntry, RepoStatus};
@@ -113,6 +114,7 @@ pub struct CommitEntry {
     pub message: String,
 }
 
+#[allow(dead_code)]
 #[derive(Debug, Clone)]
 pub struct CommitFileEntry {
     pub path: String,
@@ -154,6 +156,7 @@ pub enum GitResult {
         files: Vec<CommitFileEntry>,
         diff: String,
     },
+    #[allow(dead_code)]
     CommitFileDiffReady {
         diff: String,
     },
@@ -533,8 +536,43 @@ impl App {
 
     pub fn switch_panel(&mut self, panel: SidePanel) {
         self.active_side = panel;
-        if panel == SidePanel::Commits {
-            self.load_log();
+        match panel {
+            SidePanel::Repos => {
+                // Ensure branches loaded for preview
+                self.ensure_branches_loaded();
+            }
+            SidePanel::Files => {
+                self.reload_files();
+            }
+            SidePanel::Branches => {
+                self.ensure_branches_loaded();
+            }
+            SidePanel::Commits => {
+                self.load_log();
+            }
+            SidePanel::Stash => {
+                self.load_stash_list();
+            }
+        }
+    }
+
+    pub fn load_stash_list(&mut self) {
+        let Some(repo) = self.repos.get(self.selected_repo) else { return };
+        let path = &repo.path;
+        if let Ok(repo) = git2::Repository::open(path) {
+            let mut entries = Vec::new();
+            if let Ok(reflog) = repo.reflog("refs/stash") {
+                for i in 0..reflog.len() {
+                    if let Some(entry) = reflog.get(i) {
+                        entries.push(StashEntry {
+                            index: i,
+                            message: entry.message().unwrap_or("").to_string(),
+                        });
+                    }
+                }
+            }
+            self.stash_list = entries;
+            self.selected_stash = 0;
         }
     }
 

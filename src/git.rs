@@ -485,6 +485,7 @@ pub fn git_diff_commit(path: &Path, hash: &str) -> Result<String, String> {
     diff_to_string(&diff)
 }
 
+#[allow(dead_code)]
 /// Get the diff for a specific file in a commit using git2.
 pub fn git_diff_commit_file(path: &Path, hash: &str, file: &str) -> Result<String, String> {
     let repo = Repository::open(path).map_err(|e| e.to_string())?;
@@ -642,6 +643,7 @@ pub fn git_stash_pop(path: &Path) -> Result<String, String> {
     Ok("Stash popped".to_string())
 }
 
+#[allow(dead_code)]
 pub fn git_diff(path: &Path) -> Result<String, String> {
     let repo = Repository::open(path).map_err(|e| e.to_string())?;
     let diff = repo.diff_index_to_workdir(None, None)
