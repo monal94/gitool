@@ -31,12 +31,11 @@ impl Highlighter {
             .map(|line| {
                 // Detect file boundaries and switch syntax
                 if line.starts_with("diff --git") {
-                    if let Some(ext) = extract_extension(line) {
-                        if let Some(syntax) = self.ps.find_syntax_by_extension(&ext) {
+                    if let Some(ext) = extract_extension(line)
+                        && let Some(syntax) = self.ps.find_syntax_by_extension(&ext) {
                             current_syntax = syntax;
                             highlighter = HighlightLines::new(current_syntax, theme);
                         }
-                    }
                     return make_header_line(line);
                 }
 
@@ -52,10 +51,10 @@ impl Highlighter {
                 }
 
                 // For +/- lines, strip the marker, highlight the code, then re-add marker styling
-                let (marker, code, base_fg) = if line.starts_with('+') {
-                    ("+", &line[1..], Color::Green)
-                } else if line.starts_with('-') {
-                    ("-", &line[1..], Color::Red)
+                let (marker, code, base_fg) = if let Some(rest) = line.strip_prefix('+') {
+                    ("+", rest, Color::Green)
+                } else if let Some(rest) = line.strip_prefix('-') {
+                    ("-", rest, Color::Red)
                 } else {
                     // Context line — highlight normally
                     let spans = syntect_to_spans(&mut highlighter, line);

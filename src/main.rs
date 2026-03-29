@@ -108,7 +108,6 @@ fn handle_normal_mode(app: &mut App, key: KeyCode, modifiers: KeyModifiers) {
         // Log tab has its own navigation
         _ if app.active_tab == Tab::Log => {
             handle_log_tab(app, key, modifiers);
-            return;
         }
         KeyCode::Char('j') | KeyCode::Down => app.move_down(),
         KeyCode::Char('k') | KeyCode::Up => app.move_up(),
