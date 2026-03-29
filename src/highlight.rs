@@ -120,9 +120,16 @@ impl Highlighter {
                             highlighter = HighlightLines::new(current_syntax, theme);
                         }
 
-                // Only fully process lines in the visible window
+                // For lines outside the window: feed through syntect to maintain
+                // highlighter state, but don't build output spans
                 if i < start || i >= end {
-                    return Line::from(""); // placeholder for out-of-window lines
+                    let code = line.strip_prefix('+')
+                        .or_else(|| line.strip_prefix('-'))
+                        .unwrap_or(line);
+                    if !line.starts_with("diff ") && !line.starts_with("@@") && !line.starts_with("index ") {
+                        let _ = highlighter.highlight_line(code, &self.ps);
+                    }
+                    return Line::from("");
                 }
 
                 if line.starts_with("diff --git") || line.starts_with("index ") || line.starts_with("---") || line.starts_with("+++") {
